@@ -53,7 +53,7 @@
 \maketitle
 
 \begin{abstract}
-Decades of foundational scientific simulations in astrophysics, fluid dynamics, climate modeling, and particle physics exist exclusively in legacy Fortran (FORTRAN 66/77 and early Fortran 90). Migrating this critical software into modern computational ecosystems---specifically modern C++ (C++17/20) and vectorized scientific Python (NumPy, SciPy, Numba)---is hindered by profound semantic divergences: 1-based versus 0-based array indexing, column-major versus row-major memory stride order, unthread-safe \texttt{COMMON} block global state, unstructured \texttt{GOTO} control flow, and subtle intrinsic function roundoffs. This manual presents the design, algorithms, and theoretical guarantees of \textbf{fortranBridge}, an automated translation engine designed for Google Antigravity. We formulate formal transformation rules for index normalization, memory contiguity loop transposition, \texttt{COMMON} block encapsulation, and closed-loop floating-point round-trip verification certifying numerical equivalence ($\operatorname{Rel } L_2 \le 10^{-12}$).
+Decades of foundational scientific simulations in astrophysics, fluid dynamics, climate modeling, and particle physics exist exclusively in legacy Fortran (FORTRAN 66/77 and early Fortran 90). Migrating this critical software into modern computational ecosystems---specifically modern C++ (C++17/20) and vectorized scientific Python (NumPy, SciPy, Numba)---is hindered by profound semantic divergences: 1-based versus 0-based array indexing, column-major versus row-major memory stride order, unthread-safe \texttt{COMMON} block global state, unstructured \texttt{GOTO} control flow, and subtle intrinsic function roundoffs. This manual presents the design, algorithms, and theoretical guarantees of \textbf{fortranBridge}, an automated translation engine designed for Google Antigravity. We formulate formal transformation rules for index normalization, memory contiguity loop transposition, \texttt{COMMON} block encapsulation, formatted I/O decompilation, dataflow intent inference, multi-file topological dependency linking, and closed-loop floating-point round-trip verification certifying numerical equivalence ($\operatorname{Rel } L_2 \le 10^{-12}$).
 \end{abstract}
 
 \tableofcontents
@@ -165,9 +165,10 @@ for (int i = 0; i < n; ++i) {
 Or, when interfacing with external Fortran-ordered libraries, explicitly retaining column-major ordering via \texttt{Eigen::Matrix<double, Dynamic, Dynamic, ColMajor>} or NumPy's \texttt{order='F'}.
 
 % =============================================================================
-\section{Global State Encapsulation: COMMON Blocks}
+\section{Global State Encapsulation: COMMON and EQUIVALENCE}
 % =============================================================================
 
+\subsection{COMMON Block State Encapsulation}
 Legacy Fortran codes share variables between subroutines using global memory layouts known as \texttt{COMMON} blocks:
 \begin{lstlisting}[language=Fortran]
       SUBROUTINE STEP_ORBIT
@@ -207,13 +208,24 @@ class OrbitDataBlock:
     vel: np.ndarray = field(default_factory=lambda: np.zeros(3))
 \end{lstlisting}
 
+\subsection{EQUIVALENCE Statement De-Aliasing}
+In FORTRAN 77, \texttt{EQUIVALENCE} statements force variables to share physical memory locations:
+\begin{lstlisting}[language=Fortran]
+      DIMENSION VEC(3)
+      EQUIVALENCE (VEC(1), X), (VEC(2), Y), (VEC(3), Z)
+\end{lstlisting}
+The \texttt{equivalence\_analyzer} engine identifies whether the aliasing represents:
+\begin{itemize}
+    \item \textbf{Scalar-to-Vector Overlay}: Decompiled to C++ references (\texttt{double\& x = vec[0];}) or Python tuple unpacking.
+    \item \textbf{1D Flat Buffer to 2D Matrix Reshaping}: Decompiled to zero-copy \texttt{std::span<double>} or NumPy strided memory views (\texttt{mat = flat.view().reshape((M, N), order='F')}).
+    \item \textbf{Type Punning}: Decompiled to C++20 \texttt{std::bit\_cast} or explicit unions.
+\end{itemize}
+
 % =============================================================================
-\section{Control Flow De-Spaghettification}
+\section{Control Flow De-Spaghettification and Formatted I/O}
 % =============================================================================
 
-Legacy Fortran (especially FORTRAN 66/77) lacks modern structured control flow constructs. \texttt{fortranBridge} incorporates specialized AST restructuring rules:
-
-\subsection{Arithmetic IF}
+\subsection{Arithmetic IF and Computed GOTO}
 \begin{equation}
     \texttt{IF (E) L1, L2, L3} \quad \Longleftrightarrow \quad \begin{cases}
         \text{Jump to } L_1 & \text{if } E < 0, \\
@@ -221,47 +233,46 @@ Legacy Fortran (especially FORTRAN 66/77) lacks modern structured control flow c
         \text{Jump to } L_3 & \text{if } E > 0.
     \end{cases}
 \end{equation}
-This is decompiled into standard C++ \texttt{if (e < 0) ... else if (e == 0) ... else ...} blocks.
+This is decompiled into standard C++ \texttt{if (e < 0) ... else if (e == 0) ... else ...} blocks. Similarly, \texttt{GOTO (L1, L2, L3) I} is decompiled into a C++ \texttt{switch(i)} or Python \texttt{match/case} construct.
 
-\subsection{Computed GOTO}
+\subsection{Fortran FORMAT to C++20 std::format and Python f-Strings}
+Fortran formatted I/O uses cryptic descriptor strings:
+\begin{lstlisting}[language=Fortran]
+ 100  FORMAT(1X, 'ENERGY = ', 1P, E15.7, 2X, 'STEP = ', I6)
+      WRITE(6, 100) ENERGY, ISTEP
+\end{lstlisting}
+The \texttt{format\_decompiler} engine maps descriptors to modern typesafe string formatters:
+\begin{align}
+    \text{C++20: } & \texttt{std::cout << std::format(" ENERGY = \{:15.7e\}  STEP = \{:6d\}\textbackslash n", energy, istep);} \\
+    \text{Python: } & \texttt{print(f" ENERGY = \{energy:15.7e\}  STEP = \{istep:6d\}")}
+\end{align}
+
+% =============================================================================
+\section{Static Dataflow Intent Inference}
+% =============================================================================
+
+Because FORTRAN 77 lacked argument intent keywords, all arguments were passed as mutable pointers. The \texttt{intent\_analyzer} engine constructs a definition-use (def-use) dataflow graph for each routine:
+\begin{itemize}
+    \item \textbf{INTENT(IN)}: Variables only read in expressions $\longrightarrow$ \texttt{const T\&} or pass-by-value in C++; standard input parameter in Python.
+    \item \textbf{INTENT(OUT)}: Variables only written to $\longrightarrow$ \texttt{T\&} in C++; extracted from caller arguments and returned as clean tuple in Python (\texttt{return out1, out2}).
+    \item \textbf{INTENT(INOUT)}: Variables both read and updated $\longrightarrow$ mutable \texttt{T\&} in C++; in-place array modification in Python.
+\end{itemize}
+
+% =============================================================================
+\section{Multi-File Project Linking and Topological DAG}
+% =============================================================================
+
+Production scientific simulations consist of numerous interdependent files. The \texttt{project\_linker} engine scans codebases, identifying:
 \begin{equation}
-    \texttt{GOTO (L1, L2, L3) I} \quad \Longleftrightarrow \quad \text{Jump to label } L_i \text{ for } i \in \{1, 2, 3\}.
+    \text{Dependency Edges: } \mathcal{E} = \{ (F_i, F_j) \mid F_i \text{ uses MODULE or calls routine defined in } F_j \}.
 \end{equation}
-This is decompiled into a C++ \texttt{switch(i)} or Python \texttt{match/case} construct.
-
-\subsection{Backward Jump Loops}
-Backward jumps targeting an earlier label are recognized as discrete loops and reconstructed into structured \texttt{while} loops.
-
-% =============================================================================
-\section{Intrinsic Function Mapping}
-% =============================================================================
-
-Fortran incorporates a rich set of mathematical intrinsics. \texttt{fortranBridge} maintains an exact translation dictionary:
-\begin{table}[ht]
-\centering
-\small
-\begin{tabular}{llll}
-\toprule
-\textbf{Fortran Intrinsic} & \textbf{Modern C++17/20} & \textbf{Python (NumPy / math)} & \textbf{Mathematical Definition} \\
-\midrule
-\texttt{DSQRT(X)} & \texttt{std::sqrt(x)} & \texttt{math.sqrt(x)} / \texttt{np.sqrt(x)} & $\sqrt{x}$ \\
-\texttt{DABS(X)} & \texttt{std::abs(x)} & \texttt{abs(x)} / \texttt{np.abs(x)} & $|x|$ \\
-\texttt{DATAN2(Y, X)} & \texttt{std::atan2(y, x)} & \texttt{math.atan2(y, x)} / \texttt{np.arctan2(y, x)} & $\operatorname{atan2}(y, x)$ \\
-\texttt{SIGN(A, B)} & \texttt{std::copysign(a, b)} & \texttt{math.copysign(a, b)} & $|a| \cdot \operatorname{sgn}(b)$ \\
-\texttt{DIM(A, B)} & \texttt{std::max(0.0, a - b)} & \texttt{max(0.0, a - b)} & $\max(0, a - b)$ \\
-\texttt{DMOD(A, B)} & \texttt{std::fmod(a, b)} & \texttt{math.fmod(a, b)} & $a - \operatorname{trunc}(a/b) b$ \\
-\texttt{DOT\_PRODUCT(U,V)} & \texttt{std::inner\_product} & \texttt{np.dot(u, v)} & $\mathbf{u} \cdot \mathbf{v}$ \\
-\texttt{MATMUL(A, B)} & \texttt{A * B} (Eigen) & \texttt{A @ B} & $\mathbf{A} \mathbf{B}$ \\
-\bottomrule
-\end{tabular}
-\caption{Canonical Fortran intrinsic function mapping in fortranBridge.}
-\end{table}
+It executes a topological sort on the resulting Directed Acyclic Graph (DAG) to determine the strict compilation order and emits modular C++ headers (\texttt{.hpp}) with \texttt{\#pragma once} alongside a turnkey \texttt{CMakeLists.txt}.
 
 % =============================================================================
 \section{Closed-Loop Numerical Equivalence Verification}
 % =============================================================================
 
-The \texttt{translation\_verifier} module conducts closed-loop numerical testing comparing legacy Fortran output against translated C++ or Python implementations across parameter phase space:
+The \texttt{translation\_verifier} and \texttt{f2py\_harness} modules conduct closed-loop numerical testing comparing legacy Fortran output against translated C++ or Python implementations across parameter phase space:
 \begin{align}
     \operatorname{Rel } L_2 &= \frac{\|\mathbf{y}_{\mathrm{Fortran}} - \mathbf{y}_{\mathrm{Port}}\|_2}{\|\mathbf{y}_{\mathrm{Fortran}}\|_2 + \varepsilon} \le 10^{-12}, \\
     \operatorname{Rel } L_\infty &= \frac{\max |\mathbf{y}_{\mathrm{Fortran}} - \mathbf{y}_{\mathrm{Port}}|}{\max |\mathbf{y}_{\mathrm{Fortran}}| + \varepsilon} \le 10^{-12}.
@@ -274,17 +285,18 @@ Any discrepancy exceeding machine roundoff ($10^{-15}$) indicates an off-by-one 
 % =============================================================================
 
 \begin{lstlisting}[language=bash, caption={Running fortranBridge CLI Tools}]
-# Translate Fortran source file to C++
+# Translate Fortran source file to C++ with format decompiler and intent inference
 python3 scripts/fortran_bridge_cli.py solver.f --target cpp --out solver.cpp
 
 # Translate Fortran source file to Python with an audit report
 python3 scripts/fortran_bridge_cli.py solver.f --target python --out solver.py --report audit.md
 
-# Translate to both C++ and Python simultaneously
-python3 scripts/fortran_bridge_cli.py simulation.f90 --target both
+# Scan project directory, build DAG, and generate CMakeLists.txt
+python3 scripts/project_linker.py /path/to/fortran_project
 
 # Run closed-loop numerical equivalence test suite
 python3 scripts/translation_verifier.py --self-test
+python3 scripts/f2py_harness.py --self-test
 \end{lstlisting}
 
 \end{document}

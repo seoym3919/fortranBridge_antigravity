@@ -25,17 +25,29 @@ Decades of mission-critical scientific software exist in legacy Fortran. Manual 
 ## Architecture & Translation Pipeline
 
 ```
-   Legacy Fortran (F77 / F90)
+   Legacy Fortran (F66 / F77 / F90 / F95 / F2003)
               │
               ├──► [fortran_lexer]           ──► Normalizes Fixed/Free Format & Statement AST
               │
               ├──► [common_block_analyzer]   ──► Encapsulates COMMON -> C++ Structs / Python Dataclasses
               │
+              ├──► [equivalence_analyzer]    ──► De-aliases EQUIVALENCE -> std::span / NumPy Views
+              │
               ├──► [goto_restructurer]       ──► Replaces GOTOs -> While Loops & Switches
+              │
+              ├──► [intent_analyzer]         ──► Infers INTENT(IN/OUT) -> const T& & Return Tuples
+              │
+              ├──► [format_decompiler]       ──► FORMAT Descriptors -> C++20 std::format / f-strings
+              │
+              ├──► [project_linker]          ──► Multi-File DAG Linker & CMakeLists.txt Generator
+              │
+              ├──► [parallel_modernizer]     ──► !$OMP / DO CONCURRENT -> #pragma omp / Numba prange
               │
               ├──► [cpp-modernizer]          ──► Emits C++17/20, std::span, Loop Transposition, <cmath>
               │
               ├──► [python-vectorizer]       ──► Emits Vectorized NumPy & Type Annotations
+              │
+              ├──► [f2py_harness]            ──► Automated Direct f2py vs. Python Assertions
               │
               └──► [indexing-auditor]        ──► Validates 0-based bounds & Relative L_2 Error < 1e-12
 ```
@@ -91,6 +103,21 @@ Runs numerical equivalence tests asserting relative $L_2$ error $< 10^{-12}$:
 ```bash
 python3 scripts/translation_verifier.py --self-test
 ```
+
+### 8. Formatted I/O Decompiler: `/decompile-format`
+Decompiles Fortran edit descriptors (`Iw`, `Fw.d`, `Ew.d`, `1P`, `nX`) into C++20 `std::format` and Python f-strings:
+```text
+/decompile-format 100 FORMAT(1X, 'ENERGY = ', 1P, E15.7, 2X, 'STEP = ', I6)
+```
+
+### 9. Multi-File Project Linker: `/link-project`
+Builds topological dependency graphs across multi-file codebases, resolving compilation order and generating `CMakeLists.txt`:
+```bash
+python3 scripts/project_linker.py /path/to/project
+```
+
+### 10. Dataflow Intent & Constness Inference: `/infer-intents`
+Performs definition-use dataflow analysis to infer `const T&` in C++ and clean return value tuples in Python.
 
 ---
 
