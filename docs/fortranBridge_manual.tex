@@ -1,0 +1,290 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsfonts,amsthm}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{microtype}
+\usepackage{cite}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!70!black,
+    citecolor=blue!70!black,
+    urlcolor=blue!70!black
+}
+
+\lstset{
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{blue!80!black}\bfseries,
+    commentstyle=\color{green!50!black}\itshape,
+    stringstyle=\color{red!70!black},
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    stepnumber=1,
+    numbersep=8pt,
+    backgroundcolor=\color{gray!5},
+    frame=single,
+    framerule=0.5pt,
+    tabsize=2,
+    breaklines=true,
+    breakatwhitespace=true,
+    showstringspaces=false
+}
+
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}[section]
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}{Proposition}[section]
+
+\title{\textbf{fortranBridge: Architectural Principles, Memory Semantics, and Verification for Fortran-to-C++ and Fortran-to-Python Translation}\\[0.5ex]
+\large A Technical and Algorithmic Reference Manual}
+
+\author{\textbf{scienceStack \& Antigravity Scientific Team}\\
+\texttt{https://github.com/seoym3919/fortranBridge\_antigravity}}
+
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Decades of foundational scientific simulations in astrophysics, fluid dynamics, climate modeling, and particle physics exist exclusively in legacy Fortran (FORTRAN 66/77 and early Fortran 90). Migrating this critical software into modern computational ecosystems---specifically modern C++ (C++17/20) and vectorized scientific Python (NumPy, SciPy, Numba)---is hindered by profound semantic divergences: 1-based versus 0-based array indexing, column-major versus row-major memory stride order, unthread-safe \texttt{COMMON} block global state, unstructured \texttt{GOTO} control flow, and subtle intrinsic function roundoffs. This manual presents the design, algorithms, and theoretical guarantees of \textbf{fortranBridge}, an automated translation engine designed for Google Antigravity. We formulate formal transformation rules for index normalization, memory contiguity loop transposition, \texttt{COMMON} block encapsulation, and closed-loop floating-point round-trip verification certifying numerical equivalence ($\operatorname{Rel } L_2 \le 10^{-12}$).
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+% =============================================================================
+\section{Introduction and the Fortran Migration Mandate}
+% =============================================================================
+
+Fortran has served as the backbone of high-performance scientific computing since its introduction by John Backus in 1957. Production codes built over seven decades contain millions of lines of rigorously verified numerical algorithms. However, modern scientific software infrastructure demands features absent in legacy Fortran:
+\begin{enumerate}
+    \item \textbf{Object-Oriented and Functional Modularity}: Safe state encapsulation, thread safety, and dependency injection.
+    \item \textbf{GPU and Heterogeneous Acceleration}: CUDA, SYCL, Kokkos, and JAX/PyTorch tensor primitives.
+    \item \textbf{Modern Memory Semantics}: Zero-overhead abstractions like \texttt{std::span}, \texttt{std::vector}, and contiguous NumPy arrays.
+    \item \textbf{Interoperability and Ecosystem Integration}: REST APIs, interactive Jupyter environments, and machine learning libraries.
+\end{enumerate}
+
+Manual translation of legacy Fortran into C++ or Python is notoriously error-prone. Even experienced computational scientists frequently introduce subtle off-by-one subscript errors, inadvertent cache-thrashing memory strides, and uninitialized aliasing defects. \textbf{fortranBridge} provides an automated, mathematically rigorous translation pipeline designed to solve these systemic issues.
+
+% =============================================================================
+\section{Indexing Paradigms and Off-by-One Guarding}
+% =============================================================================
+
+\subsection{1-Based to 0-Based Coordinate Translation}
+The most prevalent source of catastrophic translation failure is the disparity between Fortran's default 1-based indexing and C++/Python's 0-based indexing:
+\begin{equation}
+    \text{Fortran: } A(1), A(2), \dots, A(N) \quad \longleftrightarrow \quad \text{C++/Python: } a[0], a[1], \dots, a[N-1].
+\end{equation}
+
+When translating loops of the canonical form:
+\begin{lstlisting}[language=Fortran]
+      DO 10 I = 1, N
+         A(I) = B(I) + C(I)
+ 10   CONTINUE
+\end{lstlisting}
+\texttt{fortranBridge} applies unified index coordinate transformation:
+\begin{equation}
+    i_{\mathrm{C++}} = i_{\mathrm{Fortran}} - 1, \quad i_{\mathrm{C++}} \in [0, N-1].
+\end{equation}
+In C++, this yields:
+\begin{lstlisting}[language=C++]
+for (int i = 0; i < n; ++i) {
+    a[i] = b[i] + c[i];
+}
+\end{lstlisting}
+And in Python, when loop vectorization is not possible:
+\begin{lstlisting}[language=Python]
+for i in range(n):
+    a[i] = b[i] + c[i]
+\end{lstlisting}
+Where vectorization is applicable, the entire loop reduces to a single vectorized statement:
+\begin{lstlisting}[language=Python]
+a = b + c
+\end{lstlisting}
+
+\subsection{Arbitrary and Negative Lower Bounds}
+Fortran permits arbitrary array dimensions:
+\begin{equation}
+    \texttt{DIMENSION A(L\_1:U\_1, L\_2:U\_2)}.
+\end{equation}
+For an array declared as \texttt{DIMENSION A(-5:5, 0:10)}, the index mapping for element $A(i, j)$ into 0-based C++ coordinates is:
+\begin{equation}
+    i_{\mathrm{C++}} = i - L_1 = i - (-5) = i + 5, \quad j_{\mathrm{C++}} = j - L_2 = j - 0 = j.
+\end{equation}
+The \texttt{indexing-auditor} agent formally verifies that all shifted array subscripts are non-negative and strictly bounded by the allocated dimension extent $U_k - L_k + 1$.
+
+% =============================================================================
+\section{Memory Layout and Memory Contiguity Transposition}
+% =============================================================================
+
+\subsection{Column-Major vs. Row-Major Storage}
+Consider a 2D matrix $A \in \mathbb{R}^{M \times N}$. The linear memory offset of element $A(i, j)$ differs fundamentally across programming paradigms:
+\begin{align}
+    \text{Fortran (Column-Major): } & \operatorname{offset}(i, j) = (i - 1) + (j - 1) \cdot M, \\
+    \text{C / C++ (Row-Major): } & \operatorname{offset}(i, j) = i \cdot N + j.
+\end{align}
+
+In Fortran, the first index $i$ varies fastest in linear memory. Consequently, canonical Fortran algorithms nest loops with $I$ in the innermost position:
+\begin{lstlisting}[language=Fortran]
+      DO 20 J = 1, M
+         DO 10 I = 1, N
+            A(I, J) = B(I, J) * C(I, J)
+ 10      CONTINUE
+ 20   CONTINUE
+\end{lstlisting}
+
+\begin{proposition}[Cache Line Contiguity Principle]
+If a Fortran nested loop is translated naively to C++ without loop or array transposition:
+\begin{lstlisting}[language=C++]
+// Cache-Destructive Naive Translation (Stride = N doubles per iteration):
+for (int j = 0; j < m; ++j) {
+    for (int i = 0; i < n; ++i) {
+        a[i][j] = b[i][j] * c[i][j]; // Cache miss on every memory fetch!
+    }
+}
+\end{lstlisting}
+Memory access jumps across rows by stride $N$, loading a 64-byte cache line but consuming only a single 8-byte double before jumping, destroying L1/L2 data cache hit rates.
+\end{proposition}
+
+\texttt{fortranBridge} addresses this by applying \textbf{Loop Stride Inversion}:
+\begin{lstlisting}[language=C++]
+// Cache-Optimal Transposed C++ Translation:
+for (int i = 0; i < n; ++i) {
+    for (int j = 0; j < m; ++j) {
+        a[i][j] = b[i][j] * c[i][j]; // Sequential, SIMD-vectorizable memory loads
+    }
+}
+\end{lstlisting}
+Or, when interfacing with external Fortran-ordered libraries, explicitly retaining column-major ordering via \texttt{Eigen::Matrix<double, Dynamic, Dynamic, ColMajor>} or NumPy's \texttt{order='F'}.
+
+% =============================================================================
+\section{Global State Encapsulation: COMMON Blocks}
+% =============================================================================
+
+Legacy Fortran codes share variables between subroutines using global memory layouts known as \texttt{COMMON} blocks:
+\begin{lstlisting}[language=Fortran]
+      SUBROUTINE STEP_ORBIT
+      COMMON /ORBIT_DATA/ ECC, SEMI, INC, POS(3), VEL(3)
+      ...
+      END
+\end{lstlisting}
+
+In modern concurrent C++ and multi-threaded Python, global mutable state leads to catastrophic data races and prevents re-entrant simulation instances.
+
+\texttt{fortranBridge} translates each named \texttt{COMMON /NAME/} block into a dedicated state structure:
+\begin{lstlisting}[language=C++]
+// Modern C++ Encapsulated Struct
+struct OrbitDataBlock {
+    double ecc{0.0};
+    double semi{0.0};
+    double inc{0.0};
+    std::array<double, 3> pos{};
+    std::array<double, 3> vel{};
+};
+
+// Subroutine accepts state reference
+void step_orbit(OrbitDataBlock& orbit_state);
+\end{lstlisting}
+
+In Python, \texttt{fortranBridge} translates the block into a typed \texttt{@dataclass}:
+\begin{lstlisting}[language=Python]
+from dataclasses import dataclass, field
+import numpy as np
+
+@dataclass
+class OrbitDataBlock:
+    ecc: float = 0.0
+    semi: float = 0.0
+    inc: float = 0.0
+    pos: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    vel: np.ndarray = field(default_factory=lambda: np.zeros(3))
+\end{lstlisting}
+
+% =============================================================================
+\section{Control Flow De-Spaghettification}
+% =============================================================================
+
+Legacy Fortran (especially FORTRAN 66/77) lacks modern structured control flow constructs. \texttt{fortranBridge} incorporates specialized AST restructuring rules:
+
+\subsection{Arithmetic IF}
+\begin{equation}
+    \texttt{IF (E) L1, L2, L3} \quad \Longleftrightarrow \quad \begin{cases}
+        \text{Jump to } L_1 & \text{if } E < 0, \\
+        \text{Jump to } L_2 & \text{if } E = 0, \\
+        \text{Jump to } L_3 & \text{if } E > 0.
+    \end{cases}
+\end{equation}
+This is decompiled into standard C++ \texttt{if (e < 0) ... else if (e == 0) ... else ...} blocks.
+
+\subsection{Computed GOTO}
+\begin{equation}
+    \texttt{GOTO (L1, L2, L3) I} \quad \Longleftrightarrow \quad \text{Jump to label } L_i \text{ for } i \in \{1, 2, 3\}.
+\end{equation}
+This is decompiled into a C++ \texttt{switch(i)} or Python \texttt{match/case} construct.
+
+\subsection{Backward Jump Loops}
+Backward jumps targeting an earlier label are recognized as discrete loops and reconstructed into structured \texttt{while} loops.
+
+% =============================================================================
+\section{Intrinsic Function Mapping}
+% =============================================================================
+
+Fortran incorporates a rich set of mathematical intrinsics. \texttt{fortranBridge} maintains an exact translation dictionary:
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{llll}
+\toprule
+\textbf{Fortran Intrinsic} & \textbf{Modern C++17/20} & \textbf{Python (NumPy / math)} & \textbf{Mathematical Definition} \\
+\midrule
+\texttt{DSQRT(X)} & \texttt{std::sqrt(x)} & \texttt{math.sqrt(x)} / \texttt{np.sqrt(x)} & $\sqrt{x}$ \\
+\texttt{DABS(X)} & \texttt{std::abs(x)} & \texttt{abs(x)} / \texttt{np.abs(x)} & $|x|$ \\
+\texttt{DATAN2(Y, X)} & \texttt{std::atan2(y, x)} & \texttt{math.atan2(y, x)} / \texttt{np.arctan2(y, x)} & $\operatorname{atan2}(y, x)$ \\
+\texttt{SIGN(A, B)} & \texttt{std::copysign(a, b)} & \texttt{math.copysign(a, b)} & $|a| \cdot \operatorname{sgn}(b)$ \\
+\texttt{DIM(A, B)} & \texttt{std::max(0.0, a - b)} & \texttt{max(0.0, a - b)} & $\max(0, a - b)$ \\
+\texttt{DMOD(A, B)} & \texttt{std::fmod(a, b)} & \texttt{math.fmod(a, b)} & $a - \operatorname{trunc}(a/b) b$ \\
+\texttt{DOT\_PRODUCT(U,V)} & \texttt{std::inner\_product} & \texttt{np.dot(u, v)} & $\mathbf{u} \cdot \mathbf{v}$ \\
+\texttt{MATMUL(A, B)} & \texttt{A * B} (Eigen) & \texttt{A @ B} & $\mathbf{A} \mathbf{B}$ \\
+\bottomrule
+\end{tabular}
+\caption{Canonical Fortran intrinsic function mapping in fortranBridge.}
+\end{table}
+
+% =============================================================================
+\section{Closed-Loop Numerical Equivalence Verification}
+% =============================================================================
+
+The \texttt{translation\_verifier} module conducts closed-loop numerical testing comparing legacy Fortran output against translated C++ or Python implementations across parameter phase space:
+\begin{align}
+    \operatorname{Rel } L_2 &= \frac{\|\mathbf{y}_{\mathrm{Fortran}} - \mathbf{y}_{\mathrm{Port}}\|_2}{\|\mathbf{y}_{\mathrm{Fortran}}\|_2 + \varepsilon} \le 10^{-12}, \\
+    \operatorname{Rel } L_\infty &= \frac{\max |\mathbf{y}_{\mathrm{Fortran}} - \mathbf{y}_{\mathrm{Port}}|}{\max |\mathbf{y}_{\mathrm{Fortran}}| + \varepsilon} \le 10^{-12}.
+\end{align}
+
+Any discrepancy exceeding machine roundoff ($10^{-15}$) indicates an off-by-one indexing error, inverted coordinate frame, or precision mismatch.
+
+% =============================================================================
+\section{Summary and Command Reference}
+% =============================================================================
+
+\begin{lstlisting}[language=bash, caption={Running fortranBridge CLI Tools}]
+# Translate Fortran source file to C++
+python3 scripts/fortran_bridge_cli.py solver.f --target cpp --out solver.cpp
+
+# Translate Fortran source file to Python with an audit report
+python3 scripts/fortran_bridge_cli.py solver.f --target python --out solver.py --report audit.md
+
+# Translate to both C++ and Python simultaneously
+python3 scripts/fortran_bridge_cli.py simulation.f90 --target both
+
+# Run closed-loop numerical equivalence test suite
+python3 scripts/translation_verifier.py --self-test
+\end{lstlisting}
+
+\end{document}

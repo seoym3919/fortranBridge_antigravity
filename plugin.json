@@ -1,0 +1,21 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "fortranbridge",
+  "version": "0.1.0",
+  "description": "Translates legacy FORTRAN (66/77/90/95/2003) into modern, high-performance C++ (C++17/20, Eigen, OpenMP) or vectorized scientific Python (NumPy, SciPy, Numba), with automated 0-based offset conversion, memory layout transposition, COMMON block encapsulation, and numerical equivalence verification.",
+  "author": {
+    "name": "scienceStack & Antigravity Scientific Team"
+  },
+  "homepage": "https://github.com/seoym3919/fortranBridge_antigravity",
+  "repository": "https://github.com/seoym3919/fortranBridge_antigravity",
+  "license": "MIT",
+  "keywords": [
+    "fortran-translation",
+    "fortran-to-cpp",
+    "fortran-to-python",
+    "legacy-code-modernization",
+    "scientific-computing",
+    "numpy-vectorization",
+    "numerical-equivalence"
+  ]
+}
