@@ -349,14 +349,14 @@ Any discrepancy exceeding machine roundoff ($10^{-15}$) indicates an off-by-one 
 % =============================================================================
 
 \begin{lstlisting}[language=bash, caption={Running fortranBridge CLI Tools}]
-# Translate Fortran source file to C++ with format decompiler and intent inference
-python3 scripts/fortran_bridge_cli.py solver.f --target cpp --out solver.cpp
+# Modernize an entire Fortran codebase directory to C++17/20 with CMakeLists.txt
+python3 scripts/fortran_bridge_cli.py /path/to/fortran_repo --target cpp
 
-# Translate Fortran source file to Python with an audit report
+# Modernize an entire Fortran codebase directory to a vectorized Python package
+python3 scripts/fortran_bridge_cli.py /path/to/fortran_repo --target python --out-dir modernized_py
+
+# Translate a single Fortran source file with an audit report
 python3 scripts/fortran_bridge_cli.py solver.f --target python --out solver.py --report audit.md
-
-# Scan project directory, build DAG, and generate CMakeLists.txt
-python3 scripts/project_linker.py /path/to/fortran_project
 
 # Run closed-loop numerical equivalence test suite
 python3 scripts/translation_verifier.py --self-test

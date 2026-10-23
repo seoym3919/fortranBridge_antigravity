@@ -117,9 +117,9 @@ Decades of mission-critical scientific software exist in legacy Fortran. Manual 
               │
               ├──► [parallel_modernizer]     ──► !$OMP / DO CONCURRENT -> #pragma omp / Numba prange
               │
-              ├──► [cpp-modernizer]          ──► Emits C++17/20, std::span, Loop Transposition, <cmath>
+              ├──► [fortran_to_cpp]          ──► Emits C++17/20, std::span, Loop Transposition, <cmath>
               │
-              ├──► [python-vectorizer]       ──► Emits Vectorized NumPy & Type Annotations
+              ├──► [fortran_to_python]       ──► Emits Vectorized NumPy & Type Annotations
               │
               ├──► [f2py_harness]            ──► Automated Direct f2py vs. Python Assertions
               │

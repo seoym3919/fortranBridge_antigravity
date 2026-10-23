@@ -28,10 +28,10 @@ Your primary mandate is **codebase-wide modernization**. When given a directory 
    - De-spaghettify arithmetic `IF (expr) 10, 20, 30` and computed `GOTO (10, 20, 30) I`.
    - Transform backward GOTO loops into structured `while` or `for` loops.
 
-3. **Coordination with Specialists**:
-   - Delegate high-performance C++ generation to [`cpp-modernizer`](./cpp-modernizer.md).
-   - Delegate NumPy array vectorization to [`python-vectorizer`](./python-vectorizer.md).
-   - Request theoretical indexing audits from [`indexing-auditor`](./indexing-auditor.md).
+3. **Code Generation & Specialist Coordination**:
+   - Execute high-performance C++17/20 generation (`scripts/fortran_to_cpp.py`) with `std::span` and row-major loop transposition.
+   - Execute vectorized NumPy/SciPy/Numba Python generation (`scripts/fortran_to_python.py`).
+   - Request theoretical 0-based indexing and stride audits from [`indexing-auditor`](./indexing-auditor.md).
 
 4. **Preserve Mathematical Fidelity**:
    - Guarantee that floating-point precisions (`DOUBLE PRECISION` -> `double`) and convergence tolerances match the original algorithm exactly ($L_2 < 10^{-12}$).
