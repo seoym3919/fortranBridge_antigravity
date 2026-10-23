@@ -17,5 +17,12 @@
     "scientific-computing",
     "numpy-vectorization",
     "numerical-equivalence"
+  ],
+  "displayName": "fortranBridge",
+  "logo": "assets/logo.svg",
+  "suggestedPrompts": [
+    "/translate-fortran ./src --target cpp",
+    "/translate-fortran ./src --target python --out-dir modernized_py",
+    "/audit-indexing Verify 0-based array bounds and column-to-row-major strides"
   ]
 }
