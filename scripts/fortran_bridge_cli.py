@@ -14,7 +14,9 @@ Usage:
 """
 
 from __future__ import annotations
+import ast
 import os
+import re
 import sys
 import argparse
 from pathlib import Path
@@ -30,6 +32,38 @@ import translation_verifier
 
 SUPPORTED_FORTRAN_EXTS = {".f", ".f77", ".for", ".f90", ".f95", ".f03", ".f08"}
 IGNORED_DIRS = {".git", ".svn", "__pycache__", ".pytest_cache", "build", "dist", ".venv", "venv"}
+
+
+def check_translation(code: str, lang: str) -> Dict[str, Any]:
+    r"""Sanity-check generated code. Returns {'error': str|None, 'untranslated': int}.
+
+    Python output must parse; C++ output must have balanced braces/parentheses (no compiler is
+    invoked). `untranslated` counts constructs the translator refused rather than guessed at.
+    """
+    if lang == "python":
+        marker = len(re.findall(r"NotImplementedError\('fortranBridge", code)) + code.count("_fortran_untranslated(")
+        try:
+            ast.parse(code)
+            return {"error": None, "untranslated": marker}
+        except SyntaxError as exc:
+            return {"error": f"line {exc.lineno}: {exc.msg}", "untranslated": marker}
+    marker = code.count('logic_error("fortranBridge') + code.count("fortran_untranslated(")
+    stripped = re.sub(r'"(?:\\.|[^"\\])*"', '""', code)
+    for open_c, close_c in (("{", "}"), ("(", ")"), ("[", "]")):
+        if stripped.count(open_c) != stripped.count(close_c):
+            return {"error": f"unbalanced '{open_c}{close_c}'", "untranslated": marker}
+    return {"error": None, "untranslated": marker}
+
+
+def report_check(name: str, result: Dict[str, Any]) -> int:
+    r"""Print the outcome of check_translation; returns 1 if the output is syntactically invalid."""
+    if result["error"]:
+        print(f"WARNING: generated code for {name} is not valid: {result['error']}", file=sys.stderr)
+        return 1
+    if result["untranslated"]:
+        print(f"NOTE: {name}: {result['untranslated']} construct(s) were not translated and fail loudly at "
+              f"runtime (search for 'fortranBridge:' in the output).", file=sys.stderr)
+    return 0
 
 
 def generate_single_file_report(filepath: str, source_text: str) -> str:
@@ -54,13 +88,13 @@ def generate_single_file_report(filepath: str, source_text: str) -> str:
     strategies = {
         "SUBROUTINE": "Translated to free function or encapsulated class method",
         "FUNCTION": "Translated to typed function returning scalar/tensor",
-        "DO": "Converted to 0-based for loop (C++: `for (int i=0; i<N; ++i)`, Python: `range(N)`)",
+        "DO": "Counted loop; Fortran loop-variable value preserved, subscripts shifted to 0-based (C++ `for`, Python `range`)",
         "COMMON": "Encapsulated into typed C++ struct or Python @dataclass state object",
         "PARAMETER": "Converted to C++ `constexpr` or Python module-level constant",
         "IF_THEN": "Translated to structured `if (...) { ... }` block",
-        "ARITHMETIC_IF": "Restructured into 3-way branching `if-else if-else` ladder",
-        "COMPUTED_GOTO": "Restructured into `switch` / `match` statement",
-        "GOTO": "Converted to structured loop exit or explicit labeled jump",
+        "ARITHMETIC_IF": "C++: `goto` ladder. Python: NOT translated (raises NotImplementedError; use restructure-goto)",
+        "COMPUTED_GOTO": "C++: `switch` + `goto`. Python: NOT translated (raises NotImplementedError)",
+        "GOTO": "C++: `goto`. Python: NOT translated (raises NotImplementedError; use restructure-goto)",
         "ASSIGNMENT": "Translated with 0-based indexing and intrinsic conversions",
     }
     for st, count in sorted(type_counts.items(), key=lambda x: x[1], reverse=True):
@@ -81,7 +115,8 @@ def generate_single_file_report(filepath: str, source_text: str) -> str:
     report.append("1. **Verify Index Offsets**: Ensure all 1-based Fortran arrays are accessed with 0-based indices in C++ / Python.")
     report.append("2. **Loop Memory Contiguity**: In C++, outer loops should index row coordinates and inner loops column coordinates for cache efficiency.")
     report.append("3. **Pass-by-Reference Constness**: Mark non-mutated parameters as `const` in C++ signatures.")
-    report.append("4. **Equivalence Testing**: Execute `scripts/translation_verifier.py` to assert numerical output equivalence.\n")
+    report.append("4. **Equivalence Testing**: Execute `scripts/translation_verifier.py` to assert numerical output equivalence.")
+    report.append("5. **Untranslated Constructs**: Statements outside the supported subset (GO TO in Python, DATA, EQUIVALENCE, formatted I/O, array sections in C++) are emitted as `raise NotImplementedError` / `throw std::logic_error`; resolve each before use.\n")
 
     return "\n".join(report)
 
@@ -123,6 +158,7 @@ def modernize_fortran_codebase(
     destination.mkdir(parents=True, exist_ok=True)
 
     translated_files: List[Tuple[str, Path]] = []
+    invalid = 0
     total_statements = 0
     all_common_blocks: Dict[str, Any] = {}
 
@@ -143,12 +179,14 @@ def modernize_fortran_codebase(
             out_cpp = destination / f"{stem}.cpp"
             out_cpp.write_text(cpp_code, encoding="utf-8")
             translated_files.append((fname, out_cpp))
+            invalid += report_check(out_cpp.name, check_translation(cpp_code, "cpp"))
 
         if target_lang in ("python", "both"):
             py_code = translate_fortran_to_python(text)
             out_py = destination / f"{stem}.py"
             out_py.write_text(py_code, encoding="utf-8")
             translated_files.append((fname, out_py))
+            invalid += report_check(out_py.name, check_translation(py_code, "python"))
 
     # Multi-file packaging
     if target_lang in ("cpp", "both"):
@@ -228,7 +266,8 @@ def modernize_fortran_codebase(
         "files": len(graph.files),
         "statements": total_statements,
         "destination": destination,
-        "report": rep_out
+        "report": rep_out,
+        "invalid_outputs": invalid,
     }
 
 
@@ -246,7 +285,7 @@ def main():
     args = parser.parse_args()
 
     if args.self_test:
-        success = translation_verifier.run_self_test()
+        success = translation_verifier.run_self_tests()
         sys.exit(0 if success else 1)
 
     target_path = Path(args.target)
@@ -256,19 +295,20 @@ def main():
 
     # DIRECTORY / CODEBASE MODE (PRIMARY MODE)
     if target_path.is_dir():
-        modernize_fortran_codebase(
+        summary = modernize_fortran_codebase(
             target_path,
             target_lang=args.target_lang,
             out_dir=args.out_dir,
             report_path=args.report
         )
-        return
+        sys.exit(3 if summary.get("invalid_outputs") else 0)
 
     # SINGLE FILE MODE (FALLBACK)
     with open(target_path, "r", encoding="utf-8", errors="replace") as f:
         source_text = f.read()
 
     base_name = target_path.stem
+    invalid = 0
 
     if args.target_lang in ("cpp", "both"):
         cpp_code = translate_fortran_to_cpp(source_text)
@@ -276,6 +316,7 @@ def main():
         with open(cpp_out, "w", encoding="utf-8") as f:
             f.write(cpp_code)
         print(f"Translated C++ code saved to: {cpp_out}")
+        invalid += report_check(cpp_out, check_translation(cpp_code, "cpp"))
 
     if args.target_lang in ("python", "both"):
         py_code = translate_fortran_to_python(source_text)
@@ -283,12 +324,15 @@ def main():
         with open(py_out, "w", encoding="utf-8") as f:
             f.write(py_code)
         print(f"Translated Python code saved to: {py_out}")
+        invalid += report_check(py_out, check_translation(py_code, "python"))
 
     if args.report:
         report_md = generate_single_file_report(str(target_path), source_text)
         with open(args.report, "w", encoding="utf-8") as f:
             f.write(report_md)
         print(f"Translation audit report saved to: {args.report}")
+
+    sys.exit(3 if invalid else 0)
 
 
 if __name__ == "__main__":

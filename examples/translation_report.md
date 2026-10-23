@@ -9,7 +9,7 @@
 | Statement Type | Count | Translation Strategy |
 |---|---|---|
 | `ASSIGNMENT` | 10 | Translated with 0-based indexing and intrinsic conversions |
-| `DO` | 4 | Converted to 0-based for loop (C++: `for (int i=0; i<N; ++i)`, Python: `range(N)`) |
+| `DO` | 4 | Counted loop; Fortran loop-variable value preserved, subscripts shifted to 0-based (C++ `for`, Python `range`) |
 | `CONTINUE` | 4 | Direct semantic translation |
 | `RETURN` | 2 | Direct semantic translation |
 | `SUBROUTINE` | 1 | Translated to free function or encapsulated class method |
@@ -34,3 +34,4 @@
 2. **Loop Memory Contiguity**: In C++, outer loops should index row coordinates and inner loops column coordinates for cache efficiency.
 3. **Pass-by-Reference Constness**: Mark non-mutated parameters as `const` in C++ signatures.
 4. **Equivalence Testing**: Execute `scripts/translation_verifier.py` to assert numerical output equivalence.
+5. **Untranslated Constructs**: Statements outside the supported subset (GO TO in Python, DATA, EQUIVALENCE, formatted I/O, array sections in C++) are emitted as `raise NotImplementedError` / `throw std::logic_error`; resolve each before use.

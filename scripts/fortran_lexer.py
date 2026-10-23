@@ -47,7 +47,7 @@ def is_fixed_format(text: str) -> bool:
             continue
         total_non_empty += 1
         # Fixed format comments in col 1
-        if len(l) > 0 and l[0] in ('C', 'c', '*'):
+        if len(l) > 0 and l[0] in ('C', 'c', '*') and (len(l) == 1 or not l[1].isalnum()):
             fixed_score += 2
         # Fixed format continuation in col 6
         elif len(l) >= 6 and l[0:5].strip() == "" and l[5] not in (' ', '0', '\t'):
@@ -76,8 +76,8 @@ def normalize_fixed_format(lines: List[str]) -> List[Tuple[int, Optional[str], s
         else:
             line = raw_line.rstrip()
 
-        # Check comment in column 1
-        if len(line) > 0 and line[0] in ('C', 'c', '*', '!'):
+        # Check comment in column 1 (a leading 'C' followed by a letter is code, e.g. CALL)
+        if len(line) > 0 and (line[0] in ('*', '!') or (line[0] in ('C', 'c') and (len(line) == 1 or not line[1].isalnum()))):
             continue
         if not line.strip():
             continue
@@ -163,6 +163,86 @@ def normalize_free_format(lines: List[str]) -> List[Tuple[int, Optional[str], st
     return statements
 
 
+_TYPE_SPEC = r'(DOUBLE\s+PRECISION|REAL|INTEGER|LOGICAL|COMPLEX|CHARACTER)'
+_KIND_SPEC = r'(\*\s*\d+|\(\s*(?:(?:KIND|LEN)\s*=\s*)?[\w*]+\s*\))?'
+
+
+def _split_top(text: str, sep: str = ',') -> List[str]:
+    parts, depth, cur = [], 0, []
+    for ch in text:
+        if ch == '(':
+            depth += 1
+        elif ch == ')':
+            depth -= 1
+        if ch == sep and depth == 0:
+            parts.append(''.join(cur).strip())
+            cur = []
+        else:
+            cur.append(ch)
+    if ''.join(cur).strip():
+        parts.append(''.join(cur).strip())
+    return parts
+
+
+def _canonical_type(base: str, kind: Optional[str]) -> str:
+    base = re.sub(r'\s+', ' ', base.upper())
+    if base == 'DOUBLE PRECISION' or not kind:
+        return base
+    k = re.sub(r'[^0-9]', '', kind)
+    if base == 'CHARACTER' or not k:
+        return base
+    return f"{base}*{k}"
+
+
+def _match_type_decl(t: str) -> Optional[Dict[str, Any]]:
+    r"""Parse `REAL(8), INTENT(IN) :: A(N)`, `DOUBLE PRECISION X, Y`, `INTEGER*4 N` declarations."""
+    m = re.match(rf'^{_TYPE_SPEC}\s*{_KIND_SPEC}\s*(.*)$', t, re.IGNORECASE)
+    if not m:
+        return None
+    base, kind, rest = m.group(1), m.group(2), m.group(3)
+    # reject assignments to variables whose names merely start with a type word (e.g. REALVAL = 1)
+    if re.match(rf'^{_TYPE_SPEC}[A-Za-z0-9_]', t, re.IGNORECASE):
+        return None
+    attrs: List[str] = []
+    if '::' in rest:
+        attr_part, decls = rest.split('::', 1)
+        attrs = [a for a in _split_top(attr_part.lstrip(', ')) if a]
+    else:
+        decls = rest
+    decls = decls.strip()
+    if not decls or decls.startswith('=') or (not attrs and rest.startswith('(') and '::' not in rest):
+        return None
+    out: Dict[str, Any] = {"type": _canonical_type(base, kind), "declarations": decls}
+    for a in attrs:
+        am = re.match(r'^(\w+)\s*(?:\((.*)\))?$', a.strip(), re.IGNORECASE)
+        if not am:
+            continue
+        key = am.group(1).lower()
+        if key == 'intent' and am.group(2):
+            out["intent"] = re.sub(r'\s+', '', am.group(2)).lower()
+        elif key == 'dimension' and am.group(2):
+            out["attr_dimension"] = am.group(2)
+        elif key == 'parameter':
+            out["is_parameter"] = True
+    return out
+
+
+def _match_parenthesized_if(t: str) -> Optional[Tuple[str, str]]:
+    r"""For `IF (cond) rest` return (cond, rest) using balanced parentheses."""
+    m = re.match(r'^IF\s*\(', t, re.IGNORECASE)
+    if not m:
+        return None
+    depth, start = 0, m.end() - 1
+    for k in range(start, len(t)):
+        if t[k] == '(':
+            depth += 1
+        elif t[k] == ')':
+            depth -= 1
+            if depth == 0:
+                return t[start + 1:k], t[k + 1:].strip()
+    return None
+
+
 def classify_statement(stmt_text: str) -> Tuple[str, Dict[str, Any]]:
     r"""Classify clean Fortran statement into statement type and extracted metadata."""
     t = stmt_text.strip()
@@ -174,12 +254,17 @@ def classify_statement(stmt_text: str) -> Tuple[str, Dict[str, Any]]:
         params = [p.strip() for p in m_sub.group(2).split(',')] if m_sub.group(2) else []
         return "SUBROUTINE", {"name": m_sub.group(1), "params": params}
 
-    m_func = re.match(r'^(?:(?:DOUBLE\s+PRECISION|REAL(?:\*\d+)?|INTEGER(?:\*\d+)?|LOGICAL(?:\*\d+)?)\s+)?FUNCTION\s+([A-Za-z0-9_]+)(?:\s*\(([^)]*)\))?', t, re.IGNORECASE)
+    m_func = re.match(rf'^(?:(?:{_TYPE_SPEC}\s*{_KIND_SPEC})\s+)?(?:RECURSIVE\s+|PURE\s+|ELEMENTAL\s+)*FUNCTION\s+([A-Za-z0-9_]+)(?:\s*\(([^)]*)\))?', t, re.IGNORECASE)
     if m_func:
-        params = [p.strip() for p in m_func.group(2).split(',')] if m_func.group(2) else []
-        return "FUNCTION", {"name": m_func.group(1), "params": params}
+        params = [p.strip() for p in m_func.group(4).split(',') if p.strip()] if m_func.group(4) else []
+        result_type = _canonical_type(m_func.group(1), m_func.group(2)) if m_func.group(1) else None
+        return "FUNCTION", {"name": m_func.group(3), "params": params, "result_type": result_type}
 
-    if re.match(r'^END\s*(?:SUBROUTINE|FUNCTION|MODULE|PROGRAM)?$', t_upper):
+    m_prog = re.match(r'^PROGRAM\s+([A-Za-z0-9_]+)\s*$', t, re.IGNORECASE)
+    if m_prog:
+        return "PROGRAM", {"name": m_prog.group(1), "params": []}
+
+    if re.match(r'^END\s*(?:(?:SUBROUTINE|FUNCTION|MODULE|PROGRAM)(?:\s+[A-Za-z0-9_]+)?)?$', t_upper):
         return "END", {}
 
     # Common Block: COMMON /NAME/ VAR1, VAR2(10)
@@ -214,15 +299,25 @@ def classify_statement(stmt_text: str) -> Tuple[str, Dict[str, Any]]:
     if t_upper.startswith("IMPLICIT"):
         return "IMPLICIT", {"raw": t}
 
-    # Type Declarations (DOUBLE PRECISION, REAL*8, INTEGER, LOGICAL, etc.)
-    type_match = re.match(
-        r'^(DOUBLE\s+PRECISION|REAL(?:\*\d+)?|INTEGER(?:\*\d+)?|LOGICAL(?:\*\d+)?|COMPLEX(?:\*\d+)?|CHARACTER(?:\*\d+)?)(?:\s*::|\s+)(.*)$',
-        t, re.IGNORECASE
-    )
-    if type_match:
-        f_type = type_match.group(1).upper()
-        vars_decl = type_match.group(2).strip()
-        return "TYPE_DECL", {"type": f_type, "declarations": vars_decl}
+    # Type Declarations (DOUBLE PRECISION, REAL*8, REAL(8), INTEGER, LOGICAL, ... with attributes and ::)
+    decl = _match_type_decl(t)
+    if decl is not None:
+        return "TYPE_DECL", decl
+
+    # STOP / non-executable declarations that carry no translatable semantics
+    if re.match(r'^STOP\b', t_upper):
+        return "STOP", {"text": t}
+    if re.match(r'^(SAVE|EXTERNAL|INTRINSIC|DATA|USE|INCLUDE|CONTAINS|NAMELIST)\b', t_upper):
+        return "NONEXEC", {"text": t}
+
+    # DO WHILE / unbounded DO / EXIT / CYCLE (Fortran 90)
+    m_dowhile = re.match(r'^DO\s+(?:(\d+)\s+)?WHILE\s*\((.*)\)$', t, re.IGNORECASE)
+    if m_dowhile:
+        return "DO_WHILE", {"loop_label": m_dowhile.group(1), "condition": m_dowhile.group(2)}
+    if t_upper == "DO":
+        return "DO_FOREVER", {}
+    if t_upper in ("EXIT", "CYCLE"):
+        return t_upper, {}
 
     # DO Loop: DO 10 I = 1, N, 2 or DO I = 1, N
     m_do = re.match(r'^DO\s+(?:(\d+)\s+)?([A-Za-z0-9_]+)\s*=\s*([^,]+),\s*([^,]+)(?:,\s*([^,]+))?$', t, re.IGNORECASE)
@@ -238,26 +333,22 @@ def classify_statement(stmt_text: str) -> Tuple[str, Dict[str, Any]]:
     if re.match(r'^END\s*DO$', t_upper) or t_upper == "CONTINUE":
         return "END_DO" if "DO" in t_upper else "CONTINUE", {}
 
-    # IF Statements
-    # Logical IF: IF (expr) THEN or IF (expr) stmt
-    m_if_then = re.match(r'^IF\s*\((.*)\)\s*THEN$', t, re.IGNORECASE)
-    if m_if_then:
-        return "IF_THEN", {"condition": m_if_then.group(1)}
-
-    # Arithmetic IF: IF (expr) 10, 20, 30
-    m_arith_if = re.match(r'^IF\s*\((.*)\)\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)$', t, re.IGNORECASE)
-    if m_arith_if:
-        return "ARITHMETIC_IF", {
-            "condition": m_arith_if.group(1),
-            "label_neg": m_arith_if.group(2),
-            "label_zero": m_arith_if.group(3),
-            "label_pos": m_arith_if.group(4)
-        }
-
-    # One-line Logical IF: IF (expr) stmt
-    m_if_stmt = re.match(r'^IF\s*\((.*?)\)\s+([A-Za-z].*)$', t, re.IGNORECASE)
-    if m_if_stmt and not m_if_stmt.group(2).upper().startswith("THEN"):
-        return "IF_STMT", {"condition": m_if_stmt.group(1), "statement": m_if_stmt.group(2)}
+    # IF Statements (balanced-parenthesis aware)
+    parsed_if = _match_parenthesized_if(t)
+    if parsed_if is not None:
+        cond, rest = parsed_if
+        if rest.upper() == "THEN":
+            return "IF_THEN", {"condition": cond}
+        m_arith = re.match(r'^(\d+)\s*,\s*(\d+)\s*,\s*(\d+)$', rest)
+        if m_arith:
+            return "ARITHMETIC_IF", {
+                "condition": cond,
+                "label_neg": m_arith.group(1),
+                "label_zero": m_arith.group(2),
+                "label_pos": m_arith.group(3),
+            }
+        if rest and re.match(r'^[A-Za-z]', rest):
+            return "IF_STMT", {"condition": cond, "statement": rest}
 
     if t_upper == "ELSE":
         return "ELSE", {}

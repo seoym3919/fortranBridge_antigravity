@@ -222,8 +222,9 @@ def decompile_write_statement(write_stmt: str, format_dict: Dict[str, str] = Non
         return cpp_code, python_code
 
     # Fallback if format label not found
+    cout_items = ' << " " << '.join(var_list)      # no backslash inside an f-string expression (Python < 3.12)
     return (
-        f"std::cout << /* format {fmt_label} */ {' << \" \" << '.join(var_list)} << std::endl;",
+        f"std::cout << /* format {fmt_label} */ {cout_items} << std::endl;",
         f"print({', '.join(var_list)}) # format {fmt_label}"
     )
 
