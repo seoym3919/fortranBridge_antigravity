@@ -1,5 +1,6 @@
 ---
 name: fortran-translator
+model: pro
 description: Translates Fortran codebases (FORTRAN 66–2003) into modern C++17/20 or vectorized Python with topological linking and COMMON encapsulation.
 ---
 

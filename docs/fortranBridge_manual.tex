@@ -98,12 +98,10 @@ Within the Antigravity chat interface, users interact directly with Fortran tran
 \end{itemize}
 
 \subsection{Subagent Delegation Architecture}
-Complex tasks are automatically routed to 4 specialized subagents:
+Complex tasks are automatically routed to specialized subagents:
 \begin{itemize}
-    \item \textbf{\texttt{fortran-translator}} (\texttt{Model: "pro"}): Lead translation architect. Manages codebase traversal, multi-file AST decomposition, and project packaging.
-    \item \textbf{\texttt{cpp-modernizer}} (\texttt{Model: "flash"}): C++17/20 high-performance engineering specialist.
-    \item \textbf{\texttt{python-vectorizer}} (\texttt{Model: "flash"}): Scientific Python and NumPy vectorization specialist.
-    \item \textbf{\texttt{indexing-auditor}} (\texttt{Model: "pro"}): Numerical and mathematical indexing auditor.
+    \item \textbf{\texttt{fortran-translator}} (\texttt{Model: "pro"} --- \texttt{claude-opus-5-5-high} / \texttt{claude-sonnet-5-5-high} / \texttt{gemini-4-argon-high}): Lead translation architect. Manages codebase traversal, multi-file AST decomposition, C++17/20 and vectorized Python modernization, and project packaging.
+    \item \textbf{\texttt{indexing-auditor}} (\texttt{Model: "pro"} --- \texttt{claude-opus-5-5-high}): Numerical and mathematical indexing auditor.
 \end{itemize}
 
 \subsection{How to Use: Standalone Command-Line Execution}

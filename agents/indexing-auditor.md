@@ -1,5 +1,6 @@
 ---
 name: indexing-auditor
+model: pro
 description: Audits translated code for 1-based to 0-based indexing off-by-one errors, slice bounds, and column-major vs row-major stride order.
 ---
 

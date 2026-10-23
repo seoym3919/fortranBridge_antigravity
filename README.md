@@ -57,11 +57,9 @@ In the Antigravity chat, interact directly with Fortran translation and auditing
 
 #### Method B: Subagent Autonomous Orchestration
 
-Antigravity automatically delegates tasks across 4 specialized subagents:
-- **`fortran-translator`** (`Model: "pro"`): Master translation coordinator. Ingests entire directories, coordinates multi-file DAG linking, and oversees architecture.
-- **`cpp-modernizer`** (`Model: "flash"`): High-performance C++17/20 engineer ensuring cache contiguity.
-- **`python-vectorizer`** (`Model: "flash"`): Scientific Python and NumPy array vectorization specialist.
-- **`indexing-auditor`** (`Model: "pro"`): Mathematical and numerical offset auditor ($L_2 < 10^{-12}$).
+Antigravity automatically delegates tasks across specialized subagents:
+- **`fortran-translator`** (`Model: "pro"` — `claude-opus-5-5-high` / `claude-sonnet-5-5-high` / `gemini-4-argon-high`): Master translation coordinator. Ingests entire directories, coordinates multi-file DAG linking, and modernizes Fortran into C++17/20 or vectorized Python.
+- **`indexing-auditor`** (`Model: "pro"` — `claude-opus-5-5-high`): Mathematical and numerical offset auditor ($L_2 < 10^{-12}$).
 
 #### Method C: Standalone Zero-Token CLI (Offline Execution)
 
@@ -134,10 +132,8 @@ Decades of mission-critical scientific software exist in legacy Fortran. Manual 
 
 | Subagent | Model | Role |
 |---|---|---|
-| [`fortran-translator`](./agents/fortran-translator.md) | `Model: "pro"` (`claude-opus-4-6-thinking`) | Lead translation architect. Manages AST decomposition, interface intents, and multi-file workflows. |
-| [`cpp-modernizer`](./agents/cpp-modernizer.md) | `Model: "flash"` (`gemini-3.8-flash-high`) | C++ performance engineer. Emits zero-overhead C++17/20 with contiguous cache memory layouts. |
-| [`python-vectorizer`](./agents/python-vectorizer.md) | `Model: "flash"` (`gemini-3.8-flash-high`) | Python specialist. Emits vectorized NumPy operations, dataclasses, and Pythonic return tuples. |
-| [`indexing-auditor`](./agents/indexing-auditor.md) | `Model: "pro"` (`claude-opus-4-6-thinking`) | Mathematical & numerical auditor. Verifies 0-based offsets and relative error norms ($L_2 < 10^{-12}$). |
+| [`fortran-translator`](./agents/fortran-translator.md) | `Model: "pro"` (`claude-opus-5-5-high` / `claude-sonnet-5-5-high` / `gemini-4-argon-high`) | Lead translation architect. Manages AST decomposition, C++17/20 & vectorized Python generation, interface intents, and multi-file workflows. |
+| [`indexing-auditor`](./agents/indexing-auditor.md) | `Model: "pro"` (`claude-opus-5-5-high`) | Mathematical & numerical auditor. Verifies 0-based offsets, memory stride order, and relative error norms ($L_2 < 10^{-12}$). |
 
 ---
 
