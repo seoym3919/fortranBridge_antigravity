@@ -215,11 +215,11 @@ def propagate(r0: np.ndarray, v0: np.ndarray, dt: float, gm: float, n: int, orbi
 ## 6. Interoperability with Ecosystem Plugins
 
 - **scienceStack**: Forward-engineers high-order scientific solvers and symplectic integrators from first-principles continuous physics.
-- **theoryReverse**: Disassembles unannotated code into continuous PDEs, dimensional null spaces, and literature citations.
+- **theoryExtractor**: Disassembles unannotated code into continuous PDEs, dimensional null spaces, and literature citations.
 - **fortranBridge**: Ports legacy Fortran models directly into modern C++ or Python for seamless integration with both stacks.
 
 ---
 
 ## 7. License
 
-MIT License. Designed and maintained by `seoym3919` as part of the Antigravity scientific ecosystem alongside `scienceStack`, `theoryReverse`, and `cppBridge`.
+MIT License. Designed and maintained by `seoym3919` as part of the Antigravity scientific ecosystem alongside `scienceStack`, `theoryExtractor`, and `cppBridge`.
