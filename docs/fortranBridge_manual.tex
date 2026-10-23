@@ -361,6 +361,9 @@ python3 scripts/fortran_bridge_cli.py solver.f --target python --out solver.py -
 # Run closed-loop numerical equivalence test suite
 python3 scripts/translation_verifier.py --self-test
 python3 scripts/f2py_harness.py --self-test
+
+# Run the 43-test unit suite (parser semantics, NumPy/C++ equivalence, CLI flags & Python 3.10 portability)
+python3 -B -m unittest discover -s tests -v
 \end{lstlisting}
 
 \end{document}

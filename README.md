@@ -80,6 +80,9 @@ python3 scripts/project_linker.py /path/to/fortran_project
 
 # 5. Run numerical equivalence self-test suite
 python3 scripts/translation_verifier.py --self-test
+
+# 6. Run the 43-test unit suite (parser semantics, NumPy/C++ equivalence, CLI flags & Python 3.10 portability)
+python3 -B -m unittest discover -s tests -v
 ```
 
 ---
@@ -102,6 +105,10 @@ Decades of mission-critical scientific software exist in legacy Fortran. Manual 
    Legacy Fortran (F66 / F77 / F90 / F95 / F2003)
               │
               ├──► [fortran_lexer]           ──► Normalizes Fixed/Free Format & Statement AST
+              │
+              ├──► [fortran_semantics]       ──► Expression Parser, Symbol Table, Static Typing & Per-Unit Analysis
+              │
+              ├──► [fortran_emit_base]       ──► Shared Statement Walker & Unsupported Construct Guards
               │
               ├──► [common_block_analyzer]   ──► Encapsulates COMMON -> C++ Structs / Python Dataclasses
               │
