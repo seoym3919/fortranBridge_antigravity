@@ -5,34 +5,35 @@ description: Master translation command to modernize legacy or modern Fortran co
 
 # /translate-fortran
 
-Translates entire Fortran source files or code routines into modern C++ or Python with automated 0-based indexing conversion, loop restructuring, COMMON block encapsulation, and equivalence verification.
+Translates entire Fortran codebase directories, repositories, or individual source files into modern, high-performance C++ (C++17/20) or vectorized scientific Python (NumPy, SciPy, Numba) with automated 0-based indexing conversion, topological multi-file linking, COMMON block encapsulation, and numerical equivalence verification.
 
 ## Usage
 
-Translate to C++:
+Modernize an entire Fortran codebase directory to modern C++:
 ```text
-/translate-fortran solver.f --target cpp
+/translate-fortran [directory] --target cpp
 ```
 
-Translate to Python:
+Modernize an entire Fortran codebase directory to vectorized Python:
 ```text
-/translate-fortran solver.f90 --target python
+/translate-fortran [directory] --target python --out-dir modernized_py
 ```
 
-Translate to both with an audit report:
+Modernize a single Fortran file:
 ```text
 /translate-fortran orbit.f --target both --report audit.md
 ```
 
-## Workflow
+## Codebase Workflow
 
-1. **Format Lexing & Normalization**:
-   Parses fixed-format card layouts (cols 1-72) or modern free-format Fortran via `scripts/fortran_lexer.py`.
-2. **COMMON Block Analysis**:
-   Converts shared memory blocks into typed C++ structs or Python `@dataclass` objects via `scripts/common_block_analyzer.py`.
-3. **Control-Flow Modernization**:
-   De-spaghettifies arithmetic IFs, computed GOTOs, and backward loops via `scripts/goto_restructurer.py`.
-4. **Code Generation**:
-   Generates idiomatic, typed C++17/20 or NumPy code with intrinsic math functions mapped (`DSQRT` -> `std::sqrt`).
-5. **Numerical Verification**:
-   Validates mathematical output equivalence using `scripts/translation_verifier.py`.
+1. **Directory-Wide Ingestion & AST Lexing**:
+   Recursively discovers all `.f`, `.f77`, `.for`, `.f90`, `.f95`, `.f03`, `.f08` files across the codebase directory.
+2. **Multi-File Topological Dependency DAG**:
+   Builds the Directed Acyclic Graph of `MODULE`, `USE`, `COMMON`, and `CALL` dependencies via `scripts/project_linker.py`, ensuring base definitions and modules are translated before dependent numerical solvers.
+3. **COMMON Block Encapsulation**:
+   Converts shared memory blocks into typed C++ structs (`include/common_blocks.hpp`) or Python `@dataclass` state objects (`common_state.py`).
+4. **Code Generation & Project Packaging**:
+   - C++: Emits C++17/20 with `std::vector`, `std::span`, and generates a root `CMakeLists.txt`.
+   - Python: Emits vectorized NumPy modules and packages them with `__init__.py`.
+5. **Codebase Translation Report & Verification**:
+   Emits `CODEBASE_TRANSLATION_REPORT.md` and runs closed-loop verification via `scripts/translation_verifier.py`.

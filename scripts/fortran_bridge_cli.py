@@ -1,32 +1,43 @@
 #!/usr/bin/env python3
 r"""
 fortran_bridge_cli.py - Master CLI for Fortran-to-C++ and Fortran-to-Python Translation.
+Codebase-Wide & Directory-First Multi-File Modernization Engine.
 
 Usage:
+    # 1. Modernize entire Fortran codebase directory:
+    python3 scripts/fortran_bridge_cli.py /path/to/fortran_repo --target cpp
+    python3 scripts/fortran_bridge_cli.py /path/to/fortran_repo --target python --out-dir modernized_py
+
+    # 2. Modernize a single Fortran file:
     python3 scripts/fortran_bridge_cli.py input.f --target cpp --out output.cpp
     python3 scripts/fortran_bridge_cli.py input.f90 --target python --out output.py
-    python3 scripts/fortran_bridge_cli.py input.f --target both
 """
 
 from __future__ import annotations
 import os
 import sys
 import argparse
-from typing import Dict, Any
+from pathlib import Path
+from typing import Dict, List, Any, Optional
 
 from fortran_lexer import lex_fortran_source, is_fixed_format
 from common_block_analyzer import analyze_common_blocks
 from fortran_to_cpp import translate_fortran_to_cpp
 from fortran_to_python import translate_fortran_to_python
+from project_linker import ProjectGraph, FortranFileInfo
+import translation_verifier
 
 
-def generate_translation_report(filepath: str, source_text: str) -> str:
-    r"""Generate Markdown translation summary and audit brief."""
+SUPPORTED_FORTRAN_EXTS = {".f", ".f77", ".for", ".f90", ".f95", ".f03", ".f08"}
+IGNORED_DIRS = {".git", ".svn", "__pycache__", ".pytest_cache", "build", "dist", ".venv", "venv"}
+
+
+def generate_single_file_report(filepath: str, source_text: str) -> str:
+    r"""Generate Markdown translation summary and audit brief for a single file."""
     stmts = lex_fortran_source(source_text)
     common_blocks = analyze_common_blocks(stmts)
     fixed = is_fixed_format(source_text)
 
-    # Count statement types
     type_counts: Dict[str, int] = {}
     for s in stmts:
         type_counts[s.stmt_type] = type_counts.get(s.stmt_type, 0) + 1
@@ -70,50 +81,214 @@ def generate_translation_report(filepath: str, source_text: str) -> str:
     report.append("1. **Verify Index Offsets**: Ensure all 1-based Fortran arrays are accessed with 0-based indices in C++ / Python.")
     report.append("2. **Loop Memory Contiguity**: In C++, outer loops should index row coordinates and inner loops column coordinates for cache efficiency.")
     report.append("3. **Pass-by-Reference Constness**: Mark non-mutated parameters as `const` in C++ signatures.")
-    report.append("4. **Equivalence Testing**: Execute `scripts/translation_verifier.py` to assert numerical output equivalence.")
+    report.append("4. **Equivalence Testing**: Execute `scripts/translation_verifier.py` to assert numerical output equivalence.\n")
 
     return "\n".join(report)
 
 
+def modernize_fortran_codebase(
+    target_dir: str | Path,
+    target_lang: str = "cpp",
+    out_dir: Optional[str | Path] = None,
+    report_path: Optional[str | Path] = None
+) -> Dict[str, Any]:
+    r"""
+    Modernize an entire Fortran codebase directory:
+    - Recursively discovers all Fortran sources
+    - Computes topological compile/translation order via ProjectGraph
+    - Translates each module into modern C++ or Python
+    - Encapsulates COMMON blocks across modules
+    - Generates CMakeLists.txt (C++) or __init__.py (Python)
+    - Emits a comprehensive CODEBASE_TRANSLATION_REPORT.md
+    """
+    root = Path(target_dir).resolve()
+    print("================================================================================")
+    print(f" [fortranBridge] Scanning Fortran Codebase Directory: {root}")
+    print("================================================================================")
+
+    # 1. Build Project Graph and Topological Order
+    graph = ProjectGraph(str(root))
+    if not graph.files:
+        print("No Fortran source files (.f, .f90, .for, etc.) found in directory.")
+        return {"files": 0}
+
+    compile_order = graph.topological_sort()
+    print(f"Discovered Fortran source files: {len(graph.files)}")
+    print(f"Topological dependency translation order:")
+    for idx, fname in enumerate(compile_order, 1):
+        print(f"  {idx}. {fname}")
+
+    # Output paths
+    destination = Path(out_dir) if out_dir else (root / f"modernized_{target_lang}")
+    destination.mkdir(parents=True, exist_ok=True)
+
+    translated_files: List[Tuple[str, Path]] = []
+    total_statements = 0
+    all_common_blocks: Dict[str, Any] = {}
+
+    for fname in compile_order:
+        info = graph.files[fname]
+        src_path = Path(info.filepath)
+        text = src_path.read_text(encoding="utf-8", errors="replace")
+
+        stmts = lex_fortran_source(text)
+        total_statements += len(stmts)
+        c_blocks = analyze_common_blocks(stmts)
+        all_common_blocks.update(c_blocks)
+
+        stem = src_path.stem
+
+        if target_lang in ("cpp", "both"):
+            cpp_code = translate_fortran_to_cpp(text)
+            out_cpp = destination / f"{stem}.cpp"
+            out_cpp.write_text(cpp_code, encoding="utf-8")
+            translated_files.append((fname, out_cpp))
+
+        if target_lang in ("python", "both"):
+            py_code = translate_fortran_to_python(text)
+            out_py = destination / f"{stem}.py"
+            out_py.write_text(py_code, encoding="utf-8")
+            translated_files.append((fname, out_py))
+
+    # Multi-file packaging
+    if target_lang in ("cpp", "both"):
+        cmake_content = graph.generate_cmakelists(project_name=root.name)
+        cmake_path = destination / "CMakeLists.txt"
+        cmake_path.write_text(cmake_content, encoding="utf-8")
+        print(f"Generated build system: {cmake_path}")
+
+    if target_lang in ("python", "both"):
+        init_lines = [
+            f"# Auto-generated package for {root.name} by fortranBridge",
+            "from __future__ import annotations",
+            ""
+        ]
+        for fname in compile_order:
+            stem = Path(fname).stem
+            init_lines.append(f"from .{stem} import *")
+        init_lines.append("\n__all__ = [")
+        for fname in compile_order:
+            stem = Path(fname).stem
+            init_lines.append(f'    "{stem}",')
+        init_lines.append("]\n")
+
+        init_path = destination / "__init__.py"
+        init_path.write_text("\n".join(init_lines), encoding="utf-8")
+        print(f"Generated Python package descriptor: {init_path}")
+
+    # Generate Codebase Translation Report
+    rep_lines = [
+        f"# Codebase Fortran Translation Report: `{root.name}`",
+        "",
+        "## 1. Executive Summary",
+        f"- **Codebase Root**: `{root}`",
+        f"- **Fortran Source Files Modernized**: {len(graph.files)}",
+        f"- **Total Logical Statements Transpiled**: {total_statements}",
+        f"- **Target Language**: {target_lang.upper()}",
+        f"- **Destination Directory**: `{destination}`",
+        f"- **Encapsulated COMMON Blocks**: {len(all_common_blocks)}",
+        "",
+        "## 2. Topological Dependency Build Sequence",
+        "Files were translated in topological order resolving all `MODULE`, `USE`, and `CALL` dependencies:",
+        ""
+    ]
+    for idx, fname in enumerate(compile_order, 1):
+        rep_lines.append(f"{idx}. `{fname}`")
+
+    if all_common_blocks:
+        rep_lines.extend([
+            "",
+            "## 3. Global COMMON Block Encapsulation",
+            "Legacy global `COMMON` blocks were de-aliased into structured state containers:",
+            "",
+            "| Block Name | Struct / Class Name | Encapsulated Members |",
+            "|---|---|---|"
+        ])
+        for b_name, b_obj in all_common_blocks.items():
+            members_str = ", ".join(f"`{v.name}` ({v.f_type})" for v in b_obj.variables)
+            rep_lines.append(f"| `/{b_name}/` | `{b_obj.struct_name}` | {members_str} |")
+
+    rep_lines.extend([
+        "",
+        "## 4. Verification and Numerical Equivalence",
+        "> [!IMPORTANT]",
+        "> Run the closed-loop verification engine to assert relative $L_2$ error $< 10^{-12}$:",
+        "> ```bash",
+        "> python3 scripts/translation_verifier.py --self-test",
+        "> ```"
+    ])
+
+    full_report = "\n".join(rep_lines)
+    rep_out = Path(report_path) if report_path else (root / "CODEBASE_TRANSLATION_REPORT.md")
+    rep_out.write_text(full_report, encoding="utf-8")
+    print(f"Codebase translation report written to: {rep_out}")
+    print("================================================================================")
+
+    return {
+        "files": len(graph.files),
+        "statements": total_statements,
+        "destination": destination,
+        "report": rep_out
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="fortranBridge CLI - Translate legacy Fortran to modern C++ and Python."
+        description="fortranBridge CLI - Translate legacy Fortran to modern C++ and Python (Codebase-Wide & Directory-First)."
     )
-    parser.add_argument("file", help="Path to Fortran source file (.f, .f77, .f90, etc.)")
-    parser.add_argument("--target", choices=["cpp", "python", "both"], default="cpp", help="Target language (default: cpp)")
-    parser.add_argument("--out", help="Output file path (for single target)")
+    parser.add_argument("target", nargs="?", default=".", help="Path to Fortran codebase directory (default: '.') or source file (.f, .f90, etc.)")
+    parser.add_argument("--target", dest="target_lang", choices=["cpp", "python", "both"], default="cpp", help="Target language (default: cpp)")
+    parser.add_argument("--out", help="Output file path (for single file translation)")
+    parser.add_argument("--out-dir", help="Output directory path (for codebase directory translation)")
     parser.add_argument("--report", help="Save translation audit report markdown")
+    parser.add_argument("--self-test", action="store_true", help="Run self-test suite")
 
     args = parser.parse_args()
 
-    if not os.path.exists(args.file):
-        print(f"Error: File '{args.file}' not found.")
+    if args.self_test:
+        success = translation_verifier.run_self_test()
+        sys.exit(0 if success else 1)
+
+    target_path = Path(args.target)
+    if not target_path.exists():
+        print(f"Error: Target path '{args.target}' not found.", file=sys.stderr)
         sys.exit(1)
 
-    with open(args.file, "r", encoding="utf-8", errors="replace") as f:
+    # DIRECTORY / CODEBASE MODE (PRIMARY MODE)
+    if target_path.is_dir():
+        modernize_fortran_codebase(
+            target_path,
+            target_lang=args.target_lang,
+            out_dir=args.out_dir,
+            report_path=args.report
+        )
+        return
+
+    # SINGLE FILE MODE (FALLBACK)
+    with open(target_path, "r", encoding="utf-8", errors="replace") as f:
         source_text = f.read()
 
-    base_name, _ = os.path.splitext(args.file)
+    base_name = target_path.stem
 
-    if args.target in ("cpp", "both"):
+    if args.target_lang in ("cpp", "both"):
         cpp_code = translate_fortran_to_cpp(source_text)
-        cpp_out = args.out if (args.out and args.target == "cpp") else f"{base_name}.cpp"
+        cpp_out = args.out if (args.out and args.target_lang == "cpp") else f"{base_name}.cpp"
         with open(cpp_out, "w", encoding="utf-8") as f:
             f.write(cpp_code)
-        print(f"[fortranBridge] C++ code generated -> {cpp_out}")
+        print(f"Translated C++ code saved to: {cpp_out}")
 
-    if args.target in ("python", "both"):
+    if args.target_lang in ("python", "both"):
         py_code = translate_fortran_to_python(source_text)
-        py_out = args.out if (args.out and args.target == "python") else f"{base_name}.py"
+        py_out = args.out if (args.out and args.target_lang == "python") else f"{base_name}.py"
         with open(py_out, "w", encoding="utf-8") as f:
             f.write(py_code)
-        print(f"[fortranBridge] Python code generated -> {py_out}")
+        print(f"Translated Python code saved to: {py_out}")
 
     if args.report:
-        report_md = generate_translation_report(args.file, source_text)
+        report_md = generate_single_file_report(str(target_path), source_text)
         with open(args.report, "w", encoding="utf-8") as f:
             f.write(report_md)
-        print(f"[fortranBridge] Audit report generated -> {args.report}")
+        print(f"Translation audit report saved to: {args.report}")
 
 
 if __name__ == "__main__":

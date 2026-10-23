@@ -4,9 +4,9 @@
 [![Agent Plugins 1.0.0](https://img.shields.io/badge/Agent%20Plugins-1.0.0%20Compliant-brightgreen.svg)](https://agent-plugins.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**fortranBridge** is an Antigravity plugin engineered to **translate legacy and modern Fortran (FORTRAN 66/77/90/95/2003) into idiomatic, high-performance C++ (C++17/20) and vectorized scientific Python (NumPy, SciPy, Numba).**
+**fortranBridge** is an Antigravity plugin engineered to **translate legacy and modern Fortran codebases, directories, and routines (FORTRAN 66/77/90/95/2003) into idiomatic, high-performance C++ (C++17/20) and vectorized scientific Python (NumPy, SciPy, Numba).**
 
-It automates the most error-prone aspects of scientific code migration: **1-based to 0-based array subscript offsets, memory layout transposition, COMMON block encapsulation, spaghetti GOTO deconstruction, and closed-loop floating-point equivalence verification ($L_2 < 10^{-12}$).**
+It operates on entire codebase directories by default, automating the most error-prone aspects of scientific code migration: **topological dependency linking (`MODULE`, `USE`, `CALL`), 1-based to 0-based array subscript offsets, memory layout transposition, COMMON block encapsulation, spaghetti GOTO deconstruction, CMakeLists.txt/Python package generation, and closed-loop floating-point equivalence verification ($L_2 < 10^{-12}$).**
 
 ---
 
@@ -40,45 +40,48 @@ agy plugin list
 
 #### Method A: Interactive Slash Commands in Antigravity
 
-In the Antigravity chat, interact directly with Fortran translation and auditing skills:
+In the Antigravity chat, interact directly with Fortran translation and auditing skills targeting entire directories or files:
 
 | Command | Action & Modernization Capability | Example Prompt |
 | :--- | :--- | :--- |
-| **`/translate-fortran`** | Master translation command: converts Fortran routines or codebases to C++ or Python. | `/translate-fortran solver.f --target cpp` |
-| **`/fortran-to-cpp`** | Ports Fortran to clean C++17/20 with `std::vector`, `std::span`, and cache-friendly loop order. | `/fortran-to-cpp orbit.f --out orbit.cpp` |
-| **`/fortran-to-python`** | Ports Fortran to vectorized scientific Python with `@dataclass` state and NumPy arrays. | `/fortran-to-python orbit.f --out orbit.py` |
-| **`/audit-indexing`** | Rigorous numerical audit of 1-based vs 0-based subscripts, memory layout, and slice ranges. | `/audit-indexing Audit array subscripts in orbit.cpp against orbit.f` |
-| **`/encapsulate-common`**| Encapsulates legacy `COMMON` blocks and `EQUIVALENCE` into thread-safe structs/dataclasses. | `/encapsulate-common global_blocks.f` |
-| **`/restructure-goto`** | De-spaghettifies backward loops, computed `GOTO`s, and arithmetic `IF`s into structured control flow. | `/restructure-goto legacy_solver.f` |
-| **`/verify-translation`**| Closed-loop numerical equivalence testing asserting relative $L_2$ error $< 10^{-12}$. | `/verify-translation orbit.f orbit.py` |
-| **`/decompile-format`** | Translates Fortran `FORMAT` descriptors into C++20 `std::format` and Python f-strings. | `/decompile-format 100 FORMAT(1X, 'E=', 1PE15.7)` |
+| **`/translate-fortran`** | **Master codebase-wide translation**: converts an entire directory or routine to modern C++ or Python. | `/translate-fortran [directory] --target cpp` |
+| **`/fortran-to-cpp`** | Ports Fortran to clean C++17/20 with `std::vector`, `std::span`, and cache-friendly loop order. | `/fortran-to-cpp src/ --out-dir cpp_src/` |
+| **`/fortran-to-python`** | Ports Fortran to vectorized scientific Python with `@dataclass` state and NumPy arrays. | `/fortran-to-python src/ --out-dir py_pkg/` |
 | **`/link-project`** | Computes topological dependency DAGs from `MODULE`/`USE` and generates `CMakeLists.txt`. | `/link-project /path/to/fortran_project` |
-| **`/infer-intents`** | Performs dataflow analysis to infer parameter intents (`const T&` in C++, return tuples in Python). | `/infer-intents subroutines.f` |
+| **`/audit-indexing`** | Rigorous numerical audit of 1-based vs 0-based subscripts, memory layout, and slice ranges across files. | `/audit-indexing Audit array subscripts across src/` |
+| **`/encapsulate-common`**| Encapsulates legacy `COMMON` blocks and `EQUIVALENCE` into thread-safe structs/dataclasses. | `/encapsulate-common src/` |
+| **`/restructure-goto`** | De-spaghettifies backward loops, computed `GOTO`s, and arithmetic `IF`s into structured control flow. | `/restructure-goto legacy_solver.f` |
+| **`/verify-translation`**| Closed-loop numerical equivalence testing asserting relative $L_2$ error $< 10^{-12}$. | `/verify-translation legacy/ modernized/` |
+| **`/decompile-format`** | Translates Fortran `FORMAT` descriptors into C++20 `std::format` and Python f-strings. | `/decompile-format 100 FORMAT(1X, 'E=', 1PE15.7)` |
+| **`/infer-intents`** | Performs dataflow analysis to infer parameter intents (`const T&` in C++, return tuples in Python). | `/infer-intents src/` |
 
 #### Method B: Subagent Autonomous Orchestration
 
 Antigravity automatically delegates tasks across 4 specialized subagents:
-- **`fortran-translator`** (`Model: "pro"`): Master translation coordinator and AST analysis lead.
+- **`fortran-translator`** (`Model: "pro"`): Master translation coordinator. Ingests entire directories, coordinates multi-file DAG linking, and oversees architecture.
 - **`cpp-modernizer`** (`Model: "flash"`): High-performance C++17/20 engineer ensuring cache contiguity.
 - **`python-vectorizer`** (`Model: "flash"`): Scientific Python and NumPy array vectorization specialist.
 - **`indexing-auditor`** (`Model: "pro"`): Mathematical and numerical offset auditor ($L_2 < 10^{-12}$).
 
 #### Method C: Standalone Zero-Token CLI (Offline Execution)
 
-Translate and audit code directly in your terminal at zero LLM token cost:
+Translate and audit codebases directly in your terminal at zero LLM token cost:
 
 ```bash
-# 1. Run numerical equivalence self-test suite
-python3 scripts/translation_verifier.py --self-test
+# 1. Modernize entire Fortran codebase directory to modern C++ with CMakeLists.txt
+python3 scripts/fortran_bridge_cli.py /path/to/fortran_repo --target cpp
 
-# 2. De-spaghettify legacy GOTO jumps
-python3 scripts/goto_restructurer.py examples/legacy_code.f
+# 2. Modernize entire Fortran codebase directory to vectorized Python with __init__.py
+python3 scripts/fortran_bridge_cli.py /path/to/fortran_repo --target python --out-dir modernized_py
 
-# 3. Analyze multi-file project dependencies and generate CMakeLists.txt
+# 3. Modernize an individual Fortran file
+python3 scripts/fortran_bridge_cli.py orbit.f --target cpp --out orbit.cpp
+
+# 4. Analyze multi-file project dependencies and generate CMakeLists.txt
 python3 scripts/project_linker.py /path/to/fortran_project
 
-# 4. Decompile FORMAT descriptors to modern format strings
-python3 scripts/format_decompiler.py "100 FORMAT(1X, 'ENERGY = ', 1P, E15.7, 2X, 'STEP = ', I6)"
+# 5. Run numerical equivalence self-test suite
+python3 scripts/translation_verifier.py --self-test
 ```
 
 ---

@@ -83,24 +83,24 @@ agy plugin list
 \end{lstlisting}
 
 \subsection{How to Use: Antigravity Slash Commands}
-Within the Antigravity chat interface, users interact directly with Fortran translation and auditing tools:
+Within the Antigravity chat interface, users interact directly with Fortran translation and auditing tools targeting directories or individual routines:
 \begin{itemize}
-    \item \texttt{/translate-fortran <file> --target <cpp|python>}: Master translation command for routines or full projects.
-    \item \texttt{/fortran-to-cpp <file>}: Generates modern C++17/20 with contiguous cache memory layouts and \texttt{std::span}.
-    \item \texttt{/fortran-to-python <file>}: Generates vectorized NumPy code with \texttt{@dataclass} state models.
-    \item \texttt{/audit-indexing <file>}: Audits 1-based to 0-based subscript translations, array bounds, and memory layout strides.
-    \item \texttt{/encapsulate-common <file>}: Converts unthread-safe \texttt{COMMON} blocks into structured C++ structs and Python dataclasses.
+    \item \texttt{/translate-fortran [directory] --target <cpp|python>}: \textbf{Master codebase-wide translation command}. Ingests the directory, resolves multi-file dependency DAGs, and generates a structured C++ project (with \texttt{CMakeLists.txt}) or Python package (with \texttt{\_\_init\_\_.py}).
+    \item \texttt{/fortran-to-cpp [directory]}: Generates modern C++17/20 with contiguous cache memory layouts, \texttt{std::span}, and build files.
+    \item \texttt{/fortran-to-python [directory]}: Generates vectorized NumPy package with \texttt{@dataclass} state models.
+    \item \texttt{/audit-indexing [directory]}: Audits 1-based to 0-based subscript translations, array bounds, and memory layout strides across all files.
+    \item \texttt{/encapsulate-common [directory]}: Converts unthread-safe \texttt{COMMON} blocks across the codebase into structured containers.
     \item \texttt{/restructure-goto <file>}: De-spaghettifies backward loops, arithmetic \texttt{IF}s, and computed \texttt{GOTO}s.
     \item \texttt{/verify-translation <file>}: Runs closed-loop numerical equivalence testing asserting relative $L_2 < 10^{-12}$.
     \item \texttt{/decompile-format <file>}: Decompiles Fortran edit descriptors into C++20 \texttt{std::format} and Python f-strings.
     \item \texttt{/link-project <dir>}: Analyzes multi-file \texttt{MODULE}/\texttt{USE} dependencies and generates \texttt{CMakeLists.txt}.
-    \item \texttt{/infer-intents <file>}: Performs dataflow analysis to infer \texttt{const T\&} in C++ and return tuples in Python.
+    \item \texttt{/infer-intents <dir>}: Performs dataflow analysis to infer \texttt{const T\&} in C++ and return tuples in Python.
 \end{itemize}
 
 \subsection{Subagent Delegation Architecture}
 Complex tasks are automatically routed to 4 specialized subagents:
 \begin{itemize}
-    \item \textbf{\texttt{fortran-translator}} (\texttt{Model: "pro"}): Lead translation architect and AST decomposition coordinator.
+    \item \textbf{\texttt{fortran-translator}} (\texttt{Model: "pro"}): Lead translation architect. Manages codebase traversal, multi-file AST decomposition, and project packaging.
     \item \textbf{\texttt{cpp-modernizer}} (\texttt{Model: "flash"}): C++17/20 high-performance engineering specialist.
     \item \textbf{\texttt{python-vectorizer}} (\texttt{Model: "flash"}): Scientific Python and NumPy vectorization specialist.
     \item \textbf{\texttt{indexing-auditor}} (\texttt{Model: "pro"}): Numerical and mathematical indexing auditor.
@@ -109,17 +109,20 @@ Complex tasks are automatically routed to 4 specialized subagents:
 \subsection{How to Use: Standalone Command-Line Execution}
 For offline environments or zero-token local processing, all tools operate via direct CLI commands:
 \begin{lstlisting}[language=bash]
-# Run numerical equivalence self-test suite
-python3 scripts/translation_verifier.py --self-test
+# 1. Modernize entire Fortran codebase directory to modern C++ with CMakeLists.txt
+python3 scripts/fortran_bridge_cli.py /path/to/fortran_repo --target cpp
 
-# De-spaghettify legacy GOTO jumps
-python3 scripts/goto_restructurer.py examples/legacy_code.f
+# 2. Modernize entire Fortran codebase directory to vectorized Python with __init__.py
+python3 scripts/fortran_bridge_cli.py /path/to/fortran_repo --target python --out-dir modernized_py
 
-# Analyze multi-file project dependencies and generate CMakeLists.txt
+# 3. Modernize an individual Fortran source file
+python3 scripts/fortran_bridge_cli.py orbit.f --target cpp --out orbit.cpp
+
+# 4. Analyze multi-file project dependencies and build topological compilation graph
 python3 scripts/project_linker.py /path/to/fortran_project
 
-# Decompile FORMAT descriptors to modern format strings
-python3 scripts/format_decompiler.py "100 FORMAT(1X, 'ENERGY = ', 1P, E15.7, 2X, 'STEP = ', I6)"
+# 5. Run numerical equivalence self-test suite
+python3 scripts/translation_verifier.py --self-test
 \end{lstlisting}
 
 % =============================================================================

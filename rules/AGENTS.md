@@ -7,6 +7,7 @@
    - Rigorous mathematical indexing & offset auditor: `invoke_subagent` (`TypeName`: `"indexing-auditor"`, `Model`: `"pro"`).
 
 2. **Translation & Porting Standards**:
+   - **Directory-First & Codebase-Wide Scope**: `fortranBridge` operates on directories and whole codebases by default. It recursively discovers all Fortran files, constructs the dependency DAG (`MODULE`, `USE`, `COMMON`, `CALL`), topologically sorts compilation order, and outputs fully structured modern C++ projects (with `CMakeLists.txt`) or Python packages (with `__init__.py`).
    - **0-Based Indexing Conversion**: Every array subscript must be converted to 0-based indexing (`a[i]` for 0-indexed loops, `a[i - 1]` for 1-based literals). Never leave raw Fortran 1-based indexing in C++ or Python.
    - **Memory Layout Contiguity**: When translating multidimensional arrays to C++, transpose nested loops so the innermost loop iterates across the contiguous dimension (avoiding cache-line hopping).
    - **COMMON Block Encapsulation**: Never translate `COMMON` blocks into global mutable variables. Encapsulate them into structured C++ `struct` / `class` instances or Python `@dataclass` state objects passed as references.
