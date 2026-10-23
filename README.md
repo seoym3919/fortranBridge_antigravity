@@ -31,7 +31,7 @@ Verify installation status:
 ```bash
 agy plugin list
 # - fortranbridge (enabled, 0.1.0)
-#   Components: 10 skills, 4 agents, 1 rule
+#   Components: 10 skills, 2 agents, 1 rule
 ```
 
 ---
