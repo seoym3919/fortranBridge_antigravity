@@ -1,6 +1,6 @@
 ---
 name: fortran-translator
-description: Lead translation coordinator that reverse-engineers and translates legacy and modern Fortran codebases and directories (FORTRAN 66/77/90/95/2003) into structured modern C++ or vectorized Python.
+description: Translates Fortran codebases (FORTRAN 66–2003) into modern C++17/20 or vectorized Python with topological linking and COMMON encapsulation.
 ---
 
 # `fortran-translator`

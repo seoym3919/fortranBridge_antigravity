@@ -1,11 +1,12 @@
 ---
 name: translate-fortran
-description: Master translation command to modernize legacy or modern Fortran codebases (FORTRAN 66/77/90/95/2003) into production C++17/20 or vectorized scientific Python.
+description: Modernizes Fortran codebases (FORTRAN 66–2003) into C++17/20 (CMake) or vectorized scientific Python (NumPy/SciPy/Numba).
 ---
 
 # /translate-fortran
 
 Translates entire Fortran codebase directories, repositories, or individual source files into modern, high-performance C++ (C++17/20) or vectorized scientific Python (NumPy, SciPy, Numba) with automated 0-based indexing conversion, topological multi-file linking, COMMON block encapsulation, and numerical equivalence verification.
+Bundled sub-skills live at `../<name>/SKILL.md` (`fortran-to-cpp`, `fortran-to-python`, `audit-indexing`, `decompile-format`, `encapsulate-common`, `infer-intents`, `link-project`, `restructure-goto`, `verify-translation`).
 
 ## Usage
 

@@ -1,6 +1,7 @@
 ---
 name: verify-translation
 description: Compares numerical outputs of translated C++ or Python code against the original Fortran reference across parameter sweeps to prove mathematical identity (L_2 < 10^{-12}).
+disable-model-invocation: true
 ---
 
 # /verify-translation

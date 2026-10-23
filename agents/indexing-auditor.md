@@ -1,6 +1,6 @@
 ---
 name: indexing-auditor
-description: Mathematical and numerical auditor that scans translated code for 1-based vs. 0-based offset off-by-one errors, array bounds, slice ranges, and memory stride transposition.
+description: Audits translated code for 1-based to 0-based indexing off-by-one errors, slice bounds, and column-major vs row-major stride order.
 ---
 
 # `indexing-auditor`

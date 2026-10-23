@@ -1,6 +1,7 @@
 ---
 name: audit-indexing
 description: Rigorous mathematical audit of translated code for 1-based vs. 0-based offset errors, array bounds, slice ranges, and memory layout order.
+disable-model-invocation: true
 ---
 
 # /audit-indexing
