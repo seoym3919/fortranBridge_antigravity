@@ -60,6 +60,69 @@ Decades of foundational scientific simulations in astrophysics, fluid dynamics, 
 \newpage
 
 % =============================================================================
+\section{Installation and How to Use}
+% =============================================================================
+
+\subsection{Installation and System Requirements}
+The \texttt{fortranBridge} plugin complies strictly with Agent Plugins Specification 1.0.0. It requires Python 3.9+ with standard scientific libraries (\texttt{numpy}, \texttt{scipy}) and standard C++ compilers (GCC/Clang supporting C++17 or C++20).
+
+To validate and install the plugin globally within Google Antigravity:
+\begin{lstlisting}[language=bash]
+# 1. Validate compliance strictly against Agent Plugins 1.0.0
+agy plugin validate /home/seo3919/AI_skills/fortranBridge_antigravity --strict
+
+# 2. Install globally in Antigravity
+agy plugin install /home/seo3919/AI_skills/fortranBridge_antigravity
+\end{lstlisting}
+
+Verify active status in Antigravity:
+\begin{lstlisting}[language=bash]
+agy plugin list
+# - fortranbridge (enabled, 0.1.0)
+#   Components: 10 skills, 4 agents, 1 rule
+\end{lstlisting}
+
+\subsection{How to Use: Antigravity Slash Commands}
+Within the Antigravity chat interface, users interact directly with Fortran translation and auditing tools:
+\begin{itemize}
+    \item \texttt{/translate-fortran <file> --target <cpp|python>}: Master translation command for routines or full projects.
+    \item \texttt{/fortran-to-cpp <file>}: Generates modern C++17/20 with contiguous cache memory layouts and \texttt{std::span}.
+    \item \texttt{/fortran-to-python <file>}: Generates vectorized NumPy code with \texttt{@dataclass} state models.
+    \item \texttt{/audit-indexing <file>}: Audits 1-based to 0-based subscript translations, array bounds, and memory layout strides.
+    \item \texttt{/encapsulate-common <file>}: Converts unthread-safe \texttt{COMMON} blocks into structured C++ structs and Python dataclasses.
+    \item \texttt{/restructure-goto <file>}: De-spaghettifies backward loops, arithmetic \texttt{IF}s, and computed \texttt{GOTO}s.
+    \item \texttt{/verify-translation <file>}: Runs closed-loop numerical equivalence testing asserting relative $L_2 < 10^{-12}$.
+    \item \texttt{/decompile-format <file>}: Decompiles Fortran edit descriptors into C++20 \texttt{std::format} and Python f-strings.
+    \item \texttt{/link-project <dir>}: Analyzes multi-file \texttt{MODULE}/\texttt{USE} dependencies and generates \texttt{CMakeLists.txt}.
+    \item \texttt{/infer-intents <file>}: Performs dataflow analysis to infer \texttt{const T\&} in C++ and return tuples in Python.
+\end{itemize}
+
+\subsection{Subagent Delegation Architecture}
+Complex tasks are automatically routed to 4 specialized subagents:
+\begin{itemize}
+    \item \textbf{\texttt{fortran-translator}} (\texttt{Model: "pro"}): Lead translation architect and AST decomposition coordinator.
+    \item \textbf{\texttt{cpp-modernizer}} (\texttt{Model: "flash"}): C++17/20 high-performance engineering specialist.
+    \item \textbf{\texttt{python-vectorizer}} (\texttt{Model: "flash"}): Scientific Python and NumPy vectorization specialist.
+    \item \textbf{\texttt{indexing-auditor}} (\texttt{Model: "pro"}): Numerical and mathematical indexing auditor.
+\end{itemize}
+
+\subsection{How to Use: Standalone Command-Line Execution}
+For offline environments or zero-token local processing, all tools operate via direct CLI commands:
+\begin{lstlisting}[language=bash]
+# Run numerical equivalence self-test suite
+python3 scripts/translation_verifier.py --self-test
+
+# De-spaghettify legacy GOTO jumps
+python3 scripts/goto_restructurer.py examples/legacy_code.f
+
+# Analyze multi-file project dependencies and generate CMakeLists.txt
+python3 scripts/project_linker.py /path/to/fortran_project
+
+# Decompile FORMAT descriptors to modern format strings
+python3 scripts/format_decompiler.py "100 FORMAT(1X, 'ENERGY = ', 1P, E15.7, 2X, 'STEP = ', I6)"
+\end{lstlisting}
+
+% =============================================================================
 \section{Introduction and the Fortran Migration Mandate}
 % =============================================================================
 

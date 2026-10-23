@@ -10,7 +10,80 @@ It automates the most error-prone aspects of scientific code migration: **1-base
 
 ---
 
-## The Challenge of Fortran Modernization
+## 1. Installation & How to Use
+
+### Installation
+
+Install `fortranBridge` globally or locally in Google Antigravity:
+
+```bash
+# 1. Validate compliance with Agent Plugins 1.0.0 (Strict mode)
+agy plugin validate /home/seo3919/AI_skills/fortranBridge_antigravity --strict
+
+# 2. Install globally in Antigravity
+agy plugin install /home/seo3919/AI_skills/fortranBridge_antigravity
+
+# Or install from GitHub:
+# agy plugin install seoym3919/fortranBridge_antigravity
+```
+
+Verify installation status:
+```bash
+agy plugin list
+# - fortranbridge (enabled, 0.1.0)
+#   Components: 10 skills, 4 agents, 1 rule
+```
+
+---
+
+### How to Use
+
+#### Method A: Interactive Slash Commands in Antigravity
+
+In the Antigravity chat, interact directly with Fortran translation and auditing skills:
+
+| Command | Action & Modernization Capability | Example Prompt |
+| :--- | :--- | :--- |
+| **`/translate-fortran`** | Master translation command: converts Fortran routines or codebases to C++ or Python. | `/translate-fortran solver.f --target cpp` |
+| **`/fortran-to-cpp`** | Ports Fortran to clean C++17/20 with `std::vector`, `std::span`, and cache-friendly loop order. | `/fortran-to-cpp orbit.f --out orbit.cpp` |
+| **`/fortran-to-python`** | Ports Fortran to vectorized scientific Python with `@dataclass` state and NumPy arrays. | `/fortran-to-python orbit.f --out orbit.py` |
+| **`/audit-indexing`** | Rigorous numerical audit of 1-based vs 0-based subscripts, memory layout, and slice ranges. | `/audit-indexing Audit array subscripts in orbit.cpp against orbit.f` |
+| **`/encapsulate-common`**| Encapsulates legacy `COMMON` blocks and `EQUIVALENCE` into thread-safe structs/dataclasses. | `/encapsulate-common global_blocks.f` |
+| **`/restructure-goto`** | De-spaghettifies backward loops, computed `GOTO`s, and arithmetic `IF`s into structured control flow. | `/restructure-goto legacy_solver.f` |
+| **`/verify-translation`**| Closed-loop numerical equivalence testing asserting relative $L_2$ error $< 10^{-12}$. | `/verify-translation orbit.f orbit.py` |
+| **`/decompile-format`** | Translates Fortran `FORMAT` descriptors into C++20 `std::format` and Python f-strings. | `/decompile-format 100 FORMAT(1X, 'E=', 1PE15.7)` |
+| **`/link-project`** | Computes topological dependency DAGs from `MODULE`/`USE` and generates `CMakeLists.txt`. | `/link-project /path/to/fortran_project` |
+| **`/infer-intents`** | Performs dataflow analysis to infer parameter intents (`const T&` in C++, return tuples in Python). | `/infer-intents subroutines.f` |
+
+#### Method B: Subagent Autonomous Orchestration
+
+Antigravity automatically delegates tasks across 4 specialized subagents:
+- **`fortran-translator`** (`Model: "pro"`): Master translation coordinator and AST analysis lead.
+- **`cpp-modernizer`** (`Model: "flash"`): High-performance C++17/20 engineer ensuring cache contiguity.
+- **`python-vectorizer`** (`Model: "flash"`): Scientific Python and NumPy array vectorization specialist.
+- **`indexing-auditor`** (`Model: "pro"`): Mathematical and numerical offset auditor ($L_2 < 10^{-12}$).
+
+#### Method C: Standalone Zero-Token CLI (Offline Execution)
+
+Translate and audit code directly in your terminal at zero LLM token cost:
+
+```bash
+# 1. Run numerical equivalence self-test suite
+python3 scripts/translation_verifier.py --self-test
+
+# 2. De-spaghettify legacy GOTO jumps
+python3 scripts/goto_restructurer.py examples/legacy_code.f
+
+# 3. Analyze multi-file project dependencies and generate CMakeLists.txt
+python3 scripts/project_linker.py /path/to/fortran_project
+
+# 4. Decompile FORMAT descriptors to modern format strings
+python3 scripts/format_decompiler.py "100 FORMAT(1X, 'ENERGY = ', 1P, E15.7, 2X, 'STEP = ', I6)"
+```
+
+---
+
+## 2. The Challenge of Fortran Modernization
 
 Decades of mission-critical scientific software exist in legacy Fortran. Manual porting typically introduces severe bugs:
 - **Off-by-One Disasters**: Fortran defaults to 1-based indexing (`A(1)`), whereas C++ and Python are 0-based (`a[0]`).
@@ -22,7 +95,7 @@ Decades of mission-critical scientific software exist in legacy Fortran. Manual 
 
 ---
 
-## Architecture & Translation Pipeline
+## 3. Architecture & Translation Pipeline
 
 ```
    Legacy Fortran (F66 / F77 / F90 / F95 / F2003)
@@ -54,7 +127,7 @@ Decades of mission-critical scientific software exist in legacy Fortran. Manual 
 
 ---
 
-## Specialized Subagents
+## 4. Specialized Subagents
 
 | Subagent | Model | Role |
 |---|---|---|
@@ -65,63 +138,7 @@ Decades of mission-critical scientific software exist in legacy Fortran. Manual 
 
 ---
 
-## Skills & Slash Commands
-
-### 1. Master Translation: `/translate-fortran`
-Translates Fortran routines or entire projects to C++ or Python:
-```text
-/translate-fortran solver.f --target cpp
-/translate-fortran simulation.f90 --target python --report audit.md
-```
-
-### 2. Modern C++ Porting: `/fortran-to-cpp`
-Generates clean, typed C++17/20 with `std::vector`, `std::array`, and `<cmath>`:
-```text
-/fortran-to-cpp orbit.f --out orbit.cpp
-```
-
-### 3. Vectorized Python Porting: `/fortran-to-python`
-Generates vectorized NumPy code with `@dataclass` state models:
-```text
-/fortran-to-python orbit.f --out orbit.py
-```
-
-### 4. Indexing & Bounds Audit: `/audit-indexing`
-Scans translated code for off-by-one errors and stride mismatches:
-```text
-/audit-indexing Audit array subscripts in orbit.cpp against orbit.f.
-```
-
-### 5. Control-Flow Restructuring: `/restructure-goto`
-De-spaghettifies arithmetic `IF`s and computed `GOTO`s into structured control flow.
-
-### 6. COMMON Block Encapsulation: `/encapsulate-common`
-Converts `COMMON /NAME/` blocks into thread-safe C++ structs and Python dataclasses.
-
-### 7. Closed-Loop Numerical Verification: `/verify-translation`
-Runs numerical equivalence tests asserting relative $L_2$ error $< 10^{-12}$:
-```bash
-python3 scripts/translation_verifier.py --self-test
-```
-
-### 8. Formatted I/O Decompiler: `/decompile-format`
-Decompiles Fortran edit descriptors (`Iw`, `Fw.d`, `Ew.d`, `1P`, `nX`) into C++20 `std::format` and Python f-strings:
-```text
-/decompile-format 100 FORMAT(1X, 'ENERGY = ', 1P, E15.7, 2X, 'STEP = ', I6)
-```
-
-### 9. Multi-File Project Linker: `/link-project`
-Builds topological dependency graphs across multi-file codebases, resolving compilation order and generating `CMakeLists.txt`:
-```bash
-python3 scripts/project_linker.py /path/to/project
-```
-
-### 10. Dataflow Intent & Constness Inference: `/infer-intents`
-Performs definition-use dataflow analysis to infer `const T&` in C++ and clean return value tuples in Python.
-
----
-
-## Translation Walkthrough Example
+## 5. Translation Walkthrough Example
 
 ### Input: Legacy FORTRAN 77 Orbital Stepper
 ```fortran
@@ -132,14 +149,14 @@ Performs definition-use dataflow analysis to infer `const T&` in C++ and clean r
       DO 10 I = 1, 3
          R_CURR(I) = R0(I)
          V_CURR(I) = V0(I)
- 10   CONTINUE
+  10  CONTINUE
       DO 100 STEP = 1, N
          R_MAG = DSQRT(R_CURR(1)**2 + R_CURR(2)**2 + R_CURR(3)**2)
          DO 50 I = 1, 3
             V_CURR(I) = V_CURR(I) - DT * GM / (R_MAG**3) * R_CURR(I)
             R_CURR(I) = R_CURR(I) + DT * V_CURR(I)
- 50      CONTINUE
- 100  CONTINUE
+  50     CONTINUE
+  100 CONTINUE
       RETURN
       END
 ```
@@ -196,29 +213,14 @@ def propagate(r0: np.ndarray, v0: np.ndarray, dt: float, gm: float, n: int, orbi
 
 ---
 
-## Installation & Setup
-
-In Google Antigravity:
-
-```bash
-# 1. Validate compliance with Agent Plugins 1.0.0
-agy plugin validate /home/seo3919/AI_skills/fortranBridge_antigravity --strict
-
-# 2. Install globally
-agy plugin install /home/seo3919/AI_skills/fortranBridge_antigravity
-```
-
-Verify installed status:
-```bash
-agy plugin list
-# - fortranbridge (enabled, 0.1.0)
-#   Components: 7 skills, 4 agents, 1 rule
-```
-
----
-
-## Interoperability with Ecosystem Plugins
+## 6. Interoperability with Ecosystem Plugins
 
 - **scienceStack**: Forward-engineers high-order scientific solvers and symplectic integrators from first-principles continuous physics.
 - **theoryReverse**: Disassembles unannotated code into continuous PDEs, dimensional null spaces, and literature citations.
 - **fortranBridge**: Ports legacy Fortran models directly into modern C++ or Python for seamless integration with both stacks.
+
+---
+
+## 7. License
+
+MIT License. Designed and maintained by `seoym3919` as part of the Antigravity scientific ecosystem alongside `scienceStack`, `theoryReverse`, and `cppBridge`.
