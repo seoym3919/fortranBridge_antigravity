@@ -2,6 +2,7 @@
 name: encapsulate-common
 description: Encapsulates Fortran COMMON blocks and EQUIVALENCE statements into modern C++ classes/structs and Python dataclasses.
 disable-model-invocation: true
+argument-hint: "<file>"
 ---
 
 # /encapsulate-common

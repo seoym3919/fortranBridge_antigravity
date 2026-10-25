@@ -1,6 +1,7 @@
 ---
 name: translate-fortran
 description: Modernizes Fortran codebases (FORTRAN 66–2003) into C++17/20 (CMake) or vectorized scientific Python (NumPy/SciPy/Numba).
+argument-hint: "[directory|file] [--target cpp|python|both]"
 ---
 
 # /translate-fortran

@@ -2,6 +2,7 @@
 name: fortran-to-python
 description: Translates Fortran subroutines and functions into vectorized scientific Python (NumPy, SciPy, Numba) with clean multi-value returns and dataclass state models.
 disable-model-invocation: true
+argument-hint: "<file.f> [--out FILE.py]"
 ---
 
 # /fortran-to-python

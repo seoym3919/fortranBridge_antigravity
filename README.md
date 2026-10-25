@@ -1,6 +1,6 @@
 # fortranBridge: Fortran to Modern C++ & Python Translation Engine
 
-[![Antigravity Plugin](https://img.shields.io/badge/Antigravity-Plugin%20v0.1.0-blue.svg)](https://github.com/seoym3919/fortranBridge_antigravity)
+[![Antigravity Plugin](https://img.shields.io/badge/Antigravity-Plugin%20v0.2.0-blue.svg)](https://github.com/seoym3919/fortranBridge_antigravity)
 [![Agent Plugins 1.0.0](https://img.shields.io/badge/Agent%20Plugins-1.0.0%20Compliant-brightgreen.svg)](https://agent-plugins.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -51,7 +51,7 @@ In the Antigravity chat, interact directly with Fortran translation and auditing
 | **`/audit-indexing`** | Rigorous numerical audit of 1-based vs 0-based subscripts, memory layout, and slice ranges across files. | `/audit-indexing Audit array subscripts across src/` |
 | **`/encapsulate-common`**| Encapsulates legacy `COMMON` blocks and `EQUIVALENCE` into thread-safe structs/dataclasses. | `/encapsulate-common src/` |
 | **`/restructure-goto`** | De-spaghettifies backward loops, computed `GOTO`s, and arithmetic `IF`s into structured control flow. | `/restructure-goto legacy_solver.f` |
-| **`/verify-translation`**| Closed-loop numerical equivalence testing asserting relative $L_2$ error $< 10^{-12}$. | `/verify-translation legacy/ modernized/` |
+| **`/verify-translation`**| Compares the Fortran program's output file with the translation's output (text with Fortran `D` exponents, or `.npy`) and exits non-zero unless relative $L_2$ and $L_\infty$ are both $\le 10^{-12}$. | `/verify-translation --ref fortran.out --test python.out` |
 | **`/decompile-format`** | Translates Fortran `FORMAT` descriptors into C++20 `std::format` and Python f-strings. | `/decompile-format 100 FORMAT(1X, 'E=', 1PE15.7)` |
 | **`/infer-intents`** | Performs dataflow analysis to infer parameter intents (`const T&` in C++, return tuples in Python). | `/infer-intents src/` |
 
@@ -79,9 +79,10 @@ python3 scripts/fortran_bridge_cli.py orbit.f --target cpp --out orbit.cpp
 python3 scripts/project_linker.py /path/to/fortran_project
 
 # 5. Run numerical equivalence self-test suite
-python3 scripts/translation_verifier.py --self-test
+python3 scripts/translation_verifier.py --self-test      # checks the verifier itself, not a translation
+python3 scripts/translation_verifier.py --ref fortran.out --test translated.out   # verifies a translation
 
-# 6. Run the 43-test unit suite (parser semantics, NumPy/C++ equivalence, CLI flags & Python 3.10 portability)
+# 6. Run the 57-test unit suite (parser semantics, verifier, NumPy/C++ equivalence, CLI flags & Python 3.10 portability)
 python3 -B -m unittest discover -s tests -v
 ```
 
@@ -227,6 +228,29 @@ def propagate(r0: np.ndarray, v0: np.ndarray, dt: float, gm: float, n: int, orbi
 
 ---
 
-## 7. License
+## 7. Scope & Limitations of the Bundled Translators
+
+`fortran_to_python.py` and `fortran_to_cpp.py` share one front end (`fortran_semantics.py`: expression parser, symbol table, static typing). They translate a structured subset and **fail loudly** on the rest.
+
+| Supported | Not translated (emitted as `raise NotImplementedError` / `throw std::logic_error`) |
+| :--- | :--- |
+| SUBROUTINE / FUNCTION / PROGRAM (several per file), fixed and free form | `GO TO`, computed `GO TO`, arithmetic `IF` (Python only; C++ keeps `goto`) |
+| Typed declarations, implicit typing, `DIMENSION`, non-unit lower bounds, `PARAMETER` | `DATA`, `EQUIVALENCE`, formatted / file I/O (`FORMAT`, `READ`, `WRITE` to units) |
+| `DO`, `DO WHILE`, `EXIT`, `CYCLE`, `IF / ELSE IF / ELSE`, one-line `IF` | Array sections and whole-array expressions (C++), derived types, `MODULE` / `USE`, pointers |
+| `CALL` (scalar results returned / passed by reference), `COMMON`, intrinsics, `PRINT *` | |
+
+Semantics worth knowing: integer division truncates as in Fortran; `INTENT(OUT)` scalars are returned in Python (`mean, var = stats(n, x)`); the Fortran loop variable keeps its Fortran value and subscripts carry the `-1` shift; C++ re-evaluates DO bounds each iteration. C++ output is checked for structure only (no compiler is invoked by the tests).
+
+The CLI validates every output: Python must parse (exit code 3 otherwise) and the number of untranslated constructs is reported on stderr.
+
+## 8. Tests
+
+```bash
+python3 -B -m unittest discover -s tests -v   # 57 tests: parser semantics, verifier, NumPy/C++ equivalence, CLI flags & Python 3.10 portability
+```
+
+Manual: [`docs/fortranBridge_manual.pdf`](./docs/fortranBridge_manual.pdf) (LaTeX source alongside).
+
+## 9. License
 
 MIT License. Designed and maintained by `seoym3919` as part of the Antigravity scientific ecosystem alongside `scienceStack`, `theoryExtractor`, and `cppBridge`.

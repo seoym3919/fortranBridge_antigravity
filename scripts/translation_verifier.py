@@ -50,6 +50,84 @@ def compute_error_norms(y_ref: List[float], y_test: List[float], eps: float = 1e
 
 
 # ---------------------------------------------------------------------------
+# Comparing real output files
+# ---------------------------------------------------------------------------
+
+class InputError(Exception):
+    """An output file cannot be read as numbers (exit status 2: nothing was compared)."""
+
+
+def parse_number(token: str) -> float:
+    r"""float() that also accepts Fortran exponents: 1.0D-3, 2.5d+02."""
+    return float(token.replace("D", "E").replace("d", "e"))
+
+
+def load_values(path: str) -> List[float]:
+    r"""Read a reference/test output file as a flat list of floats.
+
+    `.npy` needs numpy. Anything else is text: numbers separated by whitespace or commas, Fortran `D`
+    exponents allowed, blank lines and lines starting with `#` or `!` ignored.
+    """
+    if path.endswith(".npy"):
+        try:
+            import numpy as np
+        except ImportError:
+            raise InputError(f"{path}: reading .npy files needs numpy; write the output as text instead")
+        try:
+            return [float(x) for x in np.load(path).flatten()]
+        except (OSError, ValueError) as exc:
+            raise InputError(f"{path}: {exc}")
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            lines = handle.read().splitlines()
+    except OSError as exc:
+        raise InputError(f"{path}: {exc.strerror or exc}")
+    values: List[float] = []
+    for number, line in enumerate(lines, 1):
+        line = line.strip()
+        if not line or line[0] in "#!":
+            continue
+        for token in line.replace(",", " ").split():
+            try:
+                values.append(parse_number(token))
+            except ValueError:
+                raise InputError(f"{path}, line {number}: {token!r} is not a number")
+    return values
+
+
+def compare_outputs(y_ref: List[float], y_test: List[float], tol: float = 1e-12) -> Dict[str, Any]:
+    r"""Verdict for two output vectors. Pass requires Rel L_2 <= tol AND Rel L_inf <= tol.
+
+    An empty comparison, a different number of values, or any NaN/Inf fails (with the reason in "error").
+    """
+    result: Dict[str, Any] = {"tolerance": tol, "n_ref": len(y_ref), "n_test": len(y_test), "passed": False}
+    if not y_ref and not y_test:
+        result["error"] = "Both files contain no numbers: nothing was compared"
+    elif len(y_ref) != len(y_test):
+        result["error"] = f"Length mismatch: reference has {len(y_ref)} values, translation has {len(y_test)}"
+    elif not all(math.isfinite(v) for v in y_ref) or not all(math.isfinite(v) for v in y_test):
+        result["error"] = "Non-finite values (NaN or Inf) in the reference or the translation"
+    else:
+        norms = compute_error_norms(y_ref, y_test)
+        result.update(norms)
+        result["passed"] = norms["rel_l2"] <= tol and norms["rel_linf"] <= tol
+    return result
+
+
+def format_report(result: Dict[str, Any], ref_path: str, test_path: str) -> str:
+    lines = ["# fortranBridge Translation Verification", "",
+             f"- Reference (Fortran): `{ref_path}`", f"- Translation: `{test_path}`",
+             f"- Tolerance: {result['tolerance']:.1e} on relative L2 and relative Linf",
+             f"- Status: **{'PASSED' if result['passed'] else 'FAILED'}**"]
+    if "error" in result:
+        lines.append(f"- Reason: {result['error']}")
+    else:
+        lines += [f"- Points compared: {result['n_points']}", f"- Relative L2: {result['rel_l2']:.3e}",
+                  f"- Relative Linf: {result['rel_linf']:.3e}", f"- Max absolute difference: {result['linf_abs']:.3e}"]
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
 # Self-Test Reference Implementations
 # ---------------------------------------------------------------------------
 
@@ -102,23 +180,64 @@ def run_self_tests() -> bool:
     print(f"Relative L_infinity:     {norms['rel_linf']:.3e}")
 
     passed = (norms['rel_l2'] < 1e-12) and (norms['rel_linf'] < 1e-12)
+
+    # Negative controls: the verifier must reject a wrong translation, a missing value and a NaN.
+    controls = {
+        "perturbed by 1e-9": compare_outputs(all_ref, [v * (1.0 + 1e-9) for v in all_test]),
+        "one value missing": compare_outputs(all_ref, all_test[:-1]),
+        "NaN in output": compare_outputs(all_ref, all_test[:-1] + [float("nan")]),
+        "one local error in a long vector": compare_outputs([1.0] * 1_000_000, [1.0] * 999_999 + [1.0 + 5e-10]),
+    }
+    for label, outcome in controls.items():
+        if outcome["passed"]:
+            print(f"Negative control not rejected: {label}")
+            passed = False
+    if not compare_outputs(all_ref, list(all_test))["passed"]:
+        print("Positive control failed: identical outputs were rejected")
+        passed = False
     if passed:
-        print("\n✔ TRANSLATION VERIFICATION PASSED: Outputs are mathematically identical within machine tolerance.")
+        print("\n✔ SELF-TEST PASSED: the built-in reference and translated functions agree within machine tolerance.")
     else:
-        print("\n❌ TRANSLATION VERIFICATION FAILED: Discrepancy exceeds tolerance.")
+        print("\n❌ SELF-TEST FAILED: Discrepancy exceeds tolerance.")
+    print("\nNote: this self-test checks the verifier's own arithmetic on two built-in Kepler functions. "
+          "It does NOT verify your translation; use --ref and --test for that.")
     return passed
 
 
 def main():
-    parser = argparse.ArgumentParser(description="translation_verifier - Verify Fortran port equivalence.")
-    parser.add_argument("--self-test", action="store_true", help="Run internal benchmark tests")
+    parser = argparse.ArgumentParser(
+        description="translation_verifier - verify that a translated program's output matches the Fortran reference. "
+                    "Exit status: 0 compared and equal, 1 compared and different, 2 nothing was compared.")
+    parser.add_argument("--ref", help="Fortran reference output (text, Fortran D exponents allowed, or .npy)")
+    parser.add_argument("--test", help="Translated program's output for the same inputs (text or .npy)")
+    parser.add_argument("--tol", type=float, default=1e-12, help="relative L2 and Linf tolerance (default 1e-12)")
+    parser.add_argument("--report", help="write a Markdown report to this file")
+    parser.add_argument("--self-test", action="store_true", help="check the verifier itself (does not verify a translation)")
     args = parser.parse_args()
 
     if args.self_test:
-        success = run_self_tests()
-        sys.exit(0 if success else 1)
-    else:
-        parser.print_help()
+        sys.exit(0 if run_self_tests() else 1)
+
+    if not args.ref or not args.test:
+        parser.print_help(sys.stderr)
+        print("\ntranslation_verifier: give both --ref and --test (nothing was compared).", file=sys.stderr)
+        sys.exit(2)
+    if not args.tol > 0:
+        print("translation_verifier: --tol must be positive", file=sys.stderr)
+        sys.exit(2)
+    try:
+        y_ref, y_test = load_values(args.ref), load_values(args.test)
+    except InputError as exc:
+        print(f"translation_verifier: {exc}", file=sys.stderr)
+        sys.exit(2)
+
+    result = compare_outputs(y_ref, y_test, args.tol)
+    report = format_report(result, args.ref, args.test)
+    print(report)
+    if args.report:
+        with open(args.report, "w", encoding="utf-8") as handle:
+            handle.write(report)
+    sys.exit(0 if result["passed"] else 1)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
 name: link-project
 description: Analyzes multi-file Fortran codebases, builds a Directed Acyclic Graph (DAG) of MODULE, USE, and CALL dependencies, topologically sorts compilation order, and generates CMakeLists.txt.
 disable-model-invocation: true
+argument-hint: "<directory>"
 ---
 
 # /link-project

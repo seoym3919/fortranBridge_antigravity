@@ -2,6 +2,7 @@
 name: infer-intents
 description: Static dataflow analysis engine that infers parameter intents (INTENT(IN), INTENT(OUT), INTENT(INOUT)) for legacy Fortran subroutines, ensuring C++ const-correctness and Python return tuples.
 disable-model-invocation: true
+argument-hint: "<file.f>"
 ---
 
 # /infer-intents

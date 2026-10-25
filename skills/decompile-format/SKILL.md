@@ -2,6 +2,7 @@
 name: decompile-format
 description: Decompiles legacy Fortran FORMAT edit descriptors (Iw, Fw.d, Ew.d, nX, 1P) and WRITE statements into modern C++20 std::format and Python f-strings.
 disable-model-invocation: true
+argument-hint: "<FORMAT statement or file>"
 ---
 
 # /decompile-format

@@ -2,6 +2,7 @@
 name: fortran-to-cpp
 description: Translates Fortran subroutines and functions into modern, high-performance C++ (C++17/20) with optimal cache contiguity, loop transposition, std::span, and Eigen integration.
 disable-model-invocation: true
+argument-hint: "<file.f> [--out FILE.cpp]"
 ---
 
 # /fortran-to-cpp

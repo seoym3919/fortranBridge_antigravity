@@ -2,6 +2,7 @@
 name: restructure-goto
 description: Restructures spaghetti Fortran control flow (Arithmetic IFs, Computed GOTOs, backward jump loops) into clean while/for loops, switches, and guard clauses.
 disable-model-invocation: true
+argument-hint: "<file.f>"
 ---
 
 # /restructure-goto

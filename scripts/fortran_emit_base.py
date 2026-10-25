@@ -106,6 +106,8 @@ class UnitEmitter:
 
     def switch_block(self) -> None:
         r"""Leave the current IF branch before an ELSE IF / ELSE."""
+        if not self.block_marks:
+            return
         mark = self.block_marks.pop()
         self.level -= 1
         self.finish_branch(empty=(len(self.lines) == mark))

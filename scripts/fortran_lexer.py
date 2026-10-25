@@ -40,23 +40,36 @@ def is_fixed_format(text: str) -> bool:
     r"""Heuristic to detect fixed-format vs free-format Fortran."""
     lines = text.splitlines()
     fixed_score = 0
+    free_score = 0
     total_non_empty = 0
 
-    for l in lines[:100]:
-        if not l.strip():
+    for l in lines[:200]:
+        stripped = l.strip()
+        if not stripped:
             continue
         total_non_empty += 1
+
+        # Free-format signals
+        if stripped.endswith('&'):
+            free_score += 4
+        if '!' in l and not (len(l) > 0 and l[0] in ('C', 'c', '*')):
+            free_score += 1
+        if re.search(r'\b(MODULE|CONTAINS|INTERFACE|INTENT\s*\(|USE\s+[A-Za-z]|TYPE\s*::)\b', stripped, re.IGNORECASE):
+            free_score += 5
+
         # Fixed format comments in col 1
         if len(l) > 0 and l[0] in ('C', 'c', '*') and (len(l) == 1 or not l[1].isalnum()):
-            fixed_score += 2
-        # Fixed format continuation in col 6
-        elif len(l) >= 6 and l[0:5].strip() == "" and l[5] not in (' ', '0', '\t'):
             fixed_score += 3
-        # Statement label in cols 1-5
+        # Statement label in cols 1-5 followed by space
         elif len(l) >= 6 and l[0:5].strip().isdigit() and l[5] in (' ', '0', '\t'):
-            fixed_score += 2
+            fixed_score += 1
+        # Fixed format continuation in col 6 (col 0-4 blank, col 5 non-blank, cols 6+ not empty)
+        elif len(l) >= 7 and l[0:5].strip() == "" and l[5] not in (' ', '0', '\t') and not l[5].isalnum():
+            fixed_score += 4
 
-    return fixed_score >= 3 or (total_non_empty > 0 and fixed_score / total_non_empty > 0.15)
+    if free_score > fixed_score:
+        return False
+    return fixed_score >= 4 or (total_non_empty > 0 and fixed_score / total_non_empty > 0.25)
 
 
 def normalize_fixed_format(lines: List[str]) -> List[Tuple[int, Optional[str], str]]:
@@ -246,6 +259,19 @@ def _match_parenthesized_if(t: str) -> Optional[Tuple[str, str]]:
 def classify_statement(stmt_text: str) -> Tuple[str, Dict[str, Any]]:
     r"""Classify clean Fortran statement into statement type and extracted metadata."""
     t = stmt_text.strip()
+    if '!' in t:
+        parts = []
+        in_quote = None
+        for ch in t:
+            if ch in ('"', "'"):
+                if in_quote == ch:
+                    in_quote = None
+                elif in_quote is None:
+                    in_quote = ch
+            elif ch == '!' and in_quote is None:
+                break
+            parts.append(ch)
+        t = "".join(parts).strip()
     t_upper = t.upper()
 
     # Subroutine / Function
