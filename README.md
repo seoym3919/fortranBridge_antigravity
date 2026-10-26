@@ -1,6 +1,6 @@
 # fortranBridge: Fortran to Modern C++ & Python Translation Engine
 
-[![Antigravity Plugin](https://img.shields.io/badge/Antigravity-Plugin%20v0.2.0-blue.svg)](https://github.com/seoym3919/fortranBridge_antigravity)
+[![Antigravity Plugin](https://img.shields.io/badge/Antigravity-Plugin%20v0.3.4-blue.svg)](https://github.com/seoym3919/fortranBridge_antigravity)
 [![Agent Plugins 1.0.0](https://img.shields.io/badge/Agent%20Plugins-1.0.0%20Compliant-brightgreen.svg)](https://agent-plugins.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -246,7 +246,7 @@ The CLI validates every output: Python must parse (exit code 3 otherwise) and th
 ## 8. Tests
 
 ```bash
-python3 -B -m unittest discover -s tests -v   # 57 tests: parser semantics, verifier, NumPy/C++ equivalence, CLI flags & Python 3.10 portability
+python3 -B -m unittest discover -s tests -v   # 114 tests: parser semantics, verifier, evidence log, NumPy/C++ equivalence, CLI flags & Python 3.10 portability
 ```
 
 Manual: [`docs/fortranBridge_manual.pdf`](./docs/fortranBridge_manual.pdf) (LaTeX source alongside).

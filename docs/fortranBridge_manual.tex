@@ -91,7 +91,7 @@ Within the Antigravity chat interface, users interact directly with Fortran tran
     \item \texttt{/audit-indexing [directory]}: Audits 1-based to 0-based subscript translations, array bounds, and memory layout strides across all files.
     \item \texttt{/encapsulate-common [directory]}: Converts unthread-safe \texttt{COMMON} blocks across the codebase into structured containers.
     \item \texttt{/restructure-goto <file>}: De-spaghettifies backward loops, arithmetic \texttt{IF}s, and computed \texttt{GOTO}s.
-    \item \texttt{/verify-translation --ref FORTRAN\_OUT --test TRANSLATED\_OUT}: Runs closed-loop numerical equivalence testing; exits non-zero unless both relative $L_2$ and relative $L_\infty$ are $\le 10^{-12}$ (exit 2: nothing compared).
+    \item \texttt{/verify-translation --ref FORTRAN\_OUT --test TRANSLATED\_OUT}: Runs closed-loop numerical equivalence testing; exits non-zero unless both relative $L_2$ and relative $L_\infty$ are $\le 10^{-12}$ (exit 2: nothing compared; exit 3: verdict withheld because the tolerance was loosened after a failure on unchanged files; every run is appended to a hash-chained evidence log bound to the SHA-256 of both files).
     \item \texttt{/decompile-format <file>}: Decompiles Fortran edit descriptors into C++20 \texttt{std::format} and Python f-strings.
     \item \texttt{/link-project <dir>}: Analyzes multi-file \texttt{MODULE}/\texttt{USE} dependencies and generates \texttt{CMakeLists.txt}.
     \item \texttt{/infer-intents <dir>}: Performs dataflow analysis to infer \texttt{const T\&} in C++ and return tuples in Python.
@@ -123,7 +123,7 @@ python3 scripts/project_linker.py /path/to/fortran_project
 python3 scripts/translation_verifier.py --self-test      # checks the verifier itself, not a translation
 python3 scripts/translation_verifier.py --ref fortran.out --test translated.out   # verifies a translation
 
-# 6. Run the 57-test unit suite (parser semantics, verifier, NumPy/C++ equivalence, CLI flags & Python 3.10 portability)
+# 6. Run the 114-test unit suite (parser semantics, verifier, evidence log, NumPy/C++ equivalence, CLI flags & Python 3.10 portability)
 python3 -B -m unittest discover -s tests -v
 \end{lstlisting}
 

@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "fortranbridge",
-  "version": "0.2.0",
+  "version": "0.3.4",
   "description": "Translates legacy FORTRAN (66/77/90/95/2003) into modern, high-performance C++ (C++17/20, Eigen, OpenMP) or vectorized scientific Python (NumPy, SciPy, Numba), with automated 0-based offset conversion, memory layout transposition, COMMON block encapsulation, and numerical equivalence verification.",
   "author": {
     "name": "scienceStack & Antigravity Scientific Team"

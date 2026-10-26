@@ -7,6 +7,9 @@ compared (missing arguments, unreadable or non-numeric files). The tolerance (1e
 default; no test loosens it to make something pass.
 """
 
+import hashlib
+import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -39,7 +42,8 @@ class VerifierCli(unittest.TestCase):
         return self.write(name, "\n".join(fmt % v for v in values) + "\n")
 
     def cli(self, *args):
-        return subprocess.run([sys.executable, str(VERIFIER), *args], capture_output=True, text=True)
+        env = dict(os.environ, VERIFICATION_EVIDENCE_DIR=str(self.dir / ".verification"))   # never write into the repo
+        return subprocess.run([sys.executable, str(VERIFIER), *args], capture_output=True, text=True, env=env)
 
     def compare(self, ref_values, test_values, *extra):
         return self.cli("--ref", self.vec("ref.txt", ref_values), "--test", self.vec("test.txt", test_values), *extra)
@@ -91,8 +95,8 @@ class VerifierCli(unittest.TestCase):
 
     def test_tolerance_option_is_honoured_both_ways(self):
         test = [v + 1e-9 for v in REF]
-        self.assertEqual(self.compare(REF, test).returncode, 1)
-        self.assertEqual(self.compare(REF, test, "--tol", "1e-5").returncode, 0)
+        self.assertEqual(self.compare(REF, test, "--no-evidence").returncode, 1)
+        self.assertEqual(self.compare(REF, test, "--tol", "1e-5", "--no-evidence").returncode, 0)
 
     def test_non_numeric_file_exits_two(self):
         done = self.cli("--ref", self.write("a.txt", "1.0 two 3.0\n"), "--test", self.vec("b.txt", [1.0, 2.0, 3.0]))
@@ -129,6 +133,93 @@ class VerifierCli(unittest.TestCase):
         done = self.cli("--self-test")
         self.assertEqual(done.returncode, 0)
         self.assertIn("does NOT verify your translation", done.stdout)
+
+
+class EvidenceCli(unittest.TestCase):
+    """Every comparison is appended to the evidence log; a tolerance loosened after a failure on unchanged files is withheld."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self._tmp.name)
+        self.write("ref.txt", REF)
+        self.write("test.txt", [v + 1e-9 for v in REF])                    # fails at 1e-12, passes at 1e-6
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def write(self, name, values):
+        (self.dir / name).write_text("\n".join("%.17e" % v for v in values) + "\n")
+
+    def cli(self, *extra):
+        env = dict(os.environ, VERIFICATION_EVIDENCE_DIR=str(self.dir / ".verification"))
+        return subprocess.run([sys.executable, str(VERIFIER), "--ref", str(self.dir / "ref.txt"),
+                               "--test", str(self.dir / "test.txt"), *extra], capture_output=True, text=True, env=env)
+
+    def records(self):
+        return [json.loads(line) for line in (self.dir / ".verification" / "log.jsonl").read_text().splitlines()]
+
+    def test_a_run_is_recorded_with_the_hashes_of_both_files(self):
+        self.assertEqual(self.cli("--tol", "1e-6").returncode, 0)
+        (record,) = self.records()
+        self.assertEqual((record["tool"], record["plugin"], record["kind"]), ("translation_verifier", "fortranbridge", "compare"))
+        self.assertEqual((record["passed"], record["exit_status"], record["tolerance"]), (True, 0, {"tol": 1e-6}))
+        expected = {name: hashlib.sha256((self.dir / name).read_bytes()).hexdigest() for name in ("ref.txt", "test.txt")}
+        self.assertEqual({s["path"]: s["sha256"] for s in record["subjects"]}, expected)
+
+    def test_a_failure_is_recorded_as_one(self):
+        self.assertEqual(self.cli().returncode, 1)
+        self.assertEqual((self.records()[0]["passed"], self.records()[0]["exit_status"]), (False, 1))
+
+    def test_loosening_after_a_failure_on_unchanged_files_is_withheld(self):
+        self.assertEqual(self.cli().returncode, 1)
+        done = self.cli("--tol", "1e-6")
+        self.assertEqual(done.returncode, 3, done.stdout)
+        self.assertIn("verdict withheld", done.stderr)
+        self.assertIn("Verdict withheld", done.stdout)
+        self.assertIn("withheld", self.records()[-1]["flags"])
+
+    def test_rerunning_a_withheld_command_stays_withheld(self):
+        """Regression: the withheld run was logged with passed=true, so repeating the command used to return 0."""
+        self.assertEqual(self.cli().returncode, 1)
+        for _ in range(3):
+            self.assertEqual(self.cli("--tol", "1e-6").returncode, 3)
+
+    def test_a_throwaway_extra_subject_cannot_release_it(self):
+        """Regression: a changing file named with --subject used to make the files look changed."""
+        self.assertEqual(self.cli().returncode, 1)
+        throwaway = Path(tempfile.mkdtemp()) / "noise.txt"
+        throwaway.write_text(str(os.getpid()))
+        self.assertEqual(self.cli("--tol", "1e-6", "--subject", str(throwaway)).returncode, 3)
+
+    def test_a_justification_releases_it_and_is_recorded(self):
+        self.cli()
+        self.assertEqual(self.cli("--tol", "1e-6", "--justify", "Fortran WRITE prints 9 digits").returncode, 0)
+        self.assertEqual(self.records()[-1]["justification"], "Fortran WRITE prints 9 digits")
+
+    def test_regenerated_output_is_a_new_run_not_a_workaround(self):
+        self.cli()
+        self.write("test.txt", [v + 2e-9 for v in REF])                    # the translation changed
+        done = self.cli("--tol", "1e-6")
+        self.assertEqual(done.returncode, 0, done.stdout)
+        self.assertIn("subjects_changed", self.records()[-1]["flags"])
+
+    def test_a_different_test_file_is_a_different_comparison(self):
+        self.cli()                                                            # ref vs test.txt fails at 1e-12
+        self.write("other.txt", [v + 1e-9 for v in REF])
+        env = dict(os.environ, VERIFICATION_EVIDENCE_DIR=str(self.dir / ".verification"))
+        done = subprocess.run([sys.executable, str(VERIFIER), "--ref", str(self.dir / "ref.txt"),
+                               "--test", str(self.dir / "other.txt"), "--tol", "1e-6"], capture_output=True, text=True, env=env)
+        self.assertEqual(done.returncode, 0, done.stdout)
+        self.assertNotIn("tolerance_loosened_after_failure", self.records()[-1]["flags"])
+
+    def test_no_evidence_and_unwritable_evidence(self):
+        self.assertEqual(self.cli("--tol", "1e-6", "--no-evidence").returncode, 0)
+        self.assertFalse((self.dir / ".verification").exists())
+        (self.dir / ".verification").write_text("a file where the directory should be\n")
+        passed = self.cli("--tol", "1e-6")
+        self.assertEqual(passed.returncode, 2)                                # a pass without evidence is not a pass
+        self.assertIn("evidence NOT recorded", passed.stderr)
+        self.assertEqual(self.cli().returncode, 1)                            # a failure stays a failure
 
 
 if __name__ == "__main__":

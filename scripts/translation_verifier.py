@@ -9,9 +9,13 @@ against legacy Fortran benchmarks across parameter sweeps to prove mathematical 
 
 from __future__ import annotations
 import math
+import os
 import sys
 import argparse
 from typing import Callable, List, Tuple, Dict, Any
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import verification_evidence as ve  # noqa: E402
 
 
 def compute_error_norms(y_ref: List[float], y_test: List[float], eps: float = 1e-15) -> Dict[str, float]:
@@ -213,6 +217,7 @@ def main():
     parser.add_argument("--tol", type=float, default=1e-12, help="relative L2 and Linf tolerance (default 1e-12)")
     parser.add_argument("--report", help="write a Markdown report to this file")
     parser.add_argument("--self-test", action="store_true", help="check the verifier itself (does not verify a translation)")
+    ve.add_cli_options(parser)
     args = parser.parse_args()
 
     if args.self_test:
@@ -233,11 +238,24 @@ def main():
 
     result = compare_outputs(y_ref, y_test, args.tol)
     report = format_report(result, args.ref, args.test)
+    base = ve.log_path(args.evidence_dir).parent.parent
+    evidence = ve.record_cli(
+        args, tool="translation_verifier", plugin="fortranbridge", kind="compare", name="fortran_vs_translation",
+        key="compare:" + "|".join(ve.subject(p, base)["path"] for p in (args.ref, args.test)), passed=result["passed"],
+        tolerance={"tol": args.tol}, subject_paths=[args.ref, args.test],
+        detail={"n_ref": result["n_ref"], "n_test": result["n_test"], "rel_l2": result.get("rel_l2"),
+                "rel_linf": result.get("rel_linf")})
+    if evidence and not evidence.get("error"):
+        report += f"- Evidence: appended to `{evidence['log']}` (exit status {evidence['exit_status']})\n"
+        if "tolerance_loosened_after_failure" in evidence["flags"]:
+            report += "- The tolerance is looser than in the previous failed run of this comparison\n"
+        if evidence["withheld"]:
+            report += "- **Verdict withheld**: loosened after a failure on unchanged files; add --justify \"reason\"\n"
     print(report)
     if args.report:
         with open(args.report, "w", encoding="utf-8") as handle:
             handle.write(report)
-    sys.exit(0 if result["passed"] else 1)
+    sys.exit(ve.finish("translation_verifier", result["passed"], evidence))
 
 
 if __name__ == "__main__":
