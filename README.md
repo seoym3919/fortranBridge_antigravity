@@ -1,6 +1,6 @@
 # fortranBridge: Fortran to Modern C++ & Python Translation Engine
 
-[![Antigravity Plugin](https://img.shields.io/badge/Antigravity-Plugin%20v0.3.4-blue.svg)](https://github.com/seoym3919/fortranBridge_antigravity)
+[![Antigravity Plugin](https://img.shields.io/badge/Antigravity-Plugin%20v0.4.0-blue.svg)](https://github.com/seoym3919/fortranBridge_antigravity)
 [![Agent Plugins 1.0.0](https://img.shields.io/badge/Agent%20Plugins-1.0.0%20Compliant-brightgreen.svg)](https://agent-plugins.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -30,7 +30,7 @@ agy plugin install /home/seo3919/AI_skills/fortranBridge_antigravity
 Verify installation status:
 ```bash
 agy plugin list
-# - fortranbridge (enabled, 0.1.0)
+# - fortranbridge (enabled, 0.4.0)
 #   Components: 10 skills, 2 agents, 1 rule
 ```
 

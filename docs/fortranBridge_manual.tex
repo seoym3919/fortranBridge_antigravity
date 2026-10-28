@@ -78,7 +78,7 @@ agy plugin install /home/seo3919/AI_skills/fortranBridge_antigravity
 Verify active status in Antigravity:
 \begin{lstlisting}[language=bash]
 agy plugin list
-# - fortranbridge (enabled, 0.1.0)
+# - fortranbridge (enabled, 0.4.0)
 #   Components: 10 skills, 2 agents, 1 rule
 \end{lstlisting}
 
@@ -340,13 +340,18 @@ It executes a topological sort on the resulting Directed Acyclic Graph (DAG) to 
 \section{Closed-Loop Numerical Equivalence Verification}
 % =============================================================================
 
-The \texttt{translation\_verifier} and \texttt{f2py\_harness} modules conduct closed-loop numerical testing comparing legacy Fortran output against translated C++ or Python implementations across parameter phase space:
+The \texttt{translation\_verifier} module compares the output files of the legacy Fortran program and of the translation, produced for the same inputs, and \texttt{f2py\_harness} drives such comparisons across parameter phase space. A comparison with a different number of values, no values, or any NaN or infinity always fails. The printed diagnostics are
 \begin{align}
-    \operatorname{Rel } L_2 &= \frac{\|\mathbf{y}_{\mathrm{Fortran}} - \mathbf{y}_{\mathrm{Port}}\|_2}{\|\mathbf{y}_{\mathrm{Fortran}}\|_2 + \varepsilon} \le 10^{-12}, \\
-    \operatorname{Rel } L_\infty &= \frac{\max |\mathbf{y}_{\mathrm{Fortran}} - \mathbf{y}_{\mathrm{Port}}|}{\max |\mathbf{y}_{\mathrm{Fortran}}| + \varepsilon} \le 10^{-12}.
+    \operatorname{Rel } L_2 &= \frac{\|\mathbf{y}_{\mathrm{Fortran}} - \mathbf{y}_{\mathrm{Port}}\|_2}{\|\mathbf{y}_{\mathrm{Fortran}}\|_2 + \varepsilon}, \\
+    \operatorname{Rel } L_\infty &= \frac{\max |\mathbf{y}_{\mathrm{Fortran}} - \mathbf{y}_{\mathrm{Port}}|}{\max |\mathbf{y}_{\mathrm{Fortran}}| + \varepsilon}.
 \end{align}
+They are not the pass rule. The verifier exits 0 only when every element satisfies
+\begin{equation}
+    |y_{\mathrm{Port}, i} - y_{\mathrm{Fortran}, i}| \le atol + rtol\,|y_{\mathrm{Fortran}, i}|
+\end{equation}
+with float64 defaults $rtol = 10^{-12}$ and $atol = 0$, the IEEE-754 ULP distance is inside that budget, and $+0$ versus $-0$ fails. Array shape and float32 versus float64 width must match. Comparison is by index, so the same logical values stored in C or Fortran order agree.
 
-Any discrepancy exceeding machine roundoff ($10^{-15}$) indicates an off-by-one indexing error, inverted coordinate frame, or precision mismatch.
+A complete port is \texttt{port\_completeness.py --target python|cpp}, claimed only when it exits 0. Every original equation must be translated. Every procedure other than a \texttt{PROGRAM} must have a bitwise unit test, and the latest verifier record must have passed with $atol = 0$ and $\mathrm{max\_ulp} = 0$ on checker version 2 or newer. A \texttt{PROGRAM} is emitted as \texttt{main}. If the values differ, the translation is investigated. The tolerance is not raised.
 
 % =============================================================================
 \section{Summary and Command Reference}
@@ -363,11 +368,12 @@ python3 scripts/fortran_bridge_cli.py /path/to/fortran_repo --target python --ou
 python3 scripts/fortran_bridge_cli.py solver.f --target python --out solver.py --report audit.md
 
 # Run closed-loop numerical equivalence test suite
-python3 scripts/translation_verifier.py --self-test
+python3 scripts/translation_verifier.py --self-test      # checks the verifier itself, not a translation
+python3 scripts/translation_verifier.py --ref fortran.out --test translated.out \
+    --ref-source legacy.f --test-source port.py --inputs inputs.txt
+python3 scripts/port_completeness.py --original legacy.f --translated port.py \
+    --target python --unit-tests tests --evidence-log .verification/log.jsonl
 python3 scripts/f2py_harness.py --self-test
-
-# Run the 43-test unit suite (parser semantics, NumPy/C++ equivalence, CLI flags & Python 3.10 portability)
-python3 -B -m unittest discover -s tests -v
 \end{lstlisting}
 
 \end{document}

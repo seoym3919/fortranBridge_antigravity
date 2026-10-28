@@ -21,8 +21,33 @@ VERIFIER = ROOT / "scripts" / "translation_verifier.py"
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import translation_verifier as tv  # noqa: E402
+import verification_evidence as ve  # noqa: E402
 
 REF = [1.0 / (k + 1) for k in range(200)]          # fixed, deterministic values
+
+
+def bind_sources(directory: Path):
+    for name in ("ref_source.f", "test_source.py", "inputs.deck"):
+        path = directory / name
+        if not path.exists():
+            path.write_text(name + "\n")
+    return ["--ref-source", str(directory / "ref_source.f"), "--test-source", str(directory / "test_source.py"),
+            "--inputs", str(directory / "inputs.deck")]
+
+
+def tolerance_at(rtol):
+    lim = ve.limits("float64", rtol=rtol)
+    return {"rtol": lim["rtol"], "atol": lim["atol"], "max_ulp": lim["max_ulp"]}
+
+
+def write_approval(directory: Path, rtol: float, reason: str):
+    log = directory / ".verification" / "log.jsonl"
+    records, _problems = ve.read_log(log)
+    previous = next(r for r in reversed(records) if r.get("exit_status") != 3 and r.get("passed") is False)
+    payload = {"schema": ve.APPROVAL_SCHEMA, "approvals": [{
+        "key": previous["key"], "prev": previous["_line"], "old_tolerance": previous["tolerance"],
+        "new_tolerance": tolerance_at(rtol), "reason": reason}]}
+    (log.parent / "tolerance-approvals.json").write_text(json.dumps(payload))
 
 
 class VerifierCli(unittest.TestCase):
@@ -43,7 +68,8 @@ class VerifierCli(unittest.TestCase):
 
     def cli(self, *args):
         env = dict(os.environ, VERIFICATION_EVIDENCE_DIR=str(self.dir / ".verification"))   # never write into the repo
-        return subprocess.run([sys.executable, str(VERIFIER), *args], capture_output=True, text=True, env=env)
+        return subprocess.run([sys.executable, str(VERIFIER), *bind_sources(self.dir), *args],
+                              capture_output=True, text=True, env=env)
 
     def compare(self, ref_values, test_values, *extra):
         return self.cli("--ref", self.vec("ref.txt", ref_values), "--test", self.vec("test.txt", test_values), *extra)
@@ -129,6 +155,24 @@ class VerifierCli(unittest.TestCase):
         np.save(self.dir / "t.npy", np.array(REF))
         self.assertEqual(self.cli("--ref", str(self.dir / "r.npy"), "--test", str(self.dir / "t.npy")).returncode, 0)
 
+    def test_column_major_and_row_major_flats_disagree(self):
+        c_order = [0.0, 1000.0, 2000.0, 1.0, 1001.0, 2001.0]
+        f_order = [0.0, 1.0, 1000.0, 1001.0, 2000.0, 2001.0]
+        self.assertFalse(tv.compare_outputs(c_order, f_order)["passed"])
+        self.assertTrue(tv.compare_outputs(c_order, list(c_order))["passed"])
+        self.assertTrue(tv.compare_outputs(f_order, list(f_order))["passed"])
+
+    def test_negative_zero_fails(self):
+        self.assertFalse(tv.compare_outputs([0.0, 1.0], [-0.0, 1.0])["passed"])
+
+    def test_a_numeric_pass_without_bound_sources_is_not_accepted(self):
+        ref, test = self.vec("bare_ref.txt", REF), self.vec("bare_test.txt", REF)
+        env = dict(os.environ, VERIFICATION_EVIDENCE_DIR=str(self.dir / ".verification"))
+        done = subprocess.run([sys.executable, str(VERIFIER), "--ref", ref, "--test", test],
+                              capture_output=True, text=True, env=env)
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("Nothing was accepted", done.stderr)
+
     def test_self_test_runs_and_says_it_is_not_a_translation_check(self):
         done = self.cli("--self-test")
         self.assertEqual(done.returncode, 0)
@@ -153,7 +197,8 @@ class EvidenceCli(unittest.TestCase):
     def cli(self, *extra):
         env = dict(os.environ, VERIFICATION_EVIDENCE_DIR=str(self.dir / ".verification"))
         return subprocess.run([sys.executable, str(VERIFIER), "--ref", str(self.dir / "ref.txt"),
-                               "--test", str(self.dir / "test.txt"), *extra], capture_output=True, text=True, env=env)
+                               "--test", str(self.dir / "test.txt"), *bind_sources(self.dir), *extra],
+                              capture_output=True, text=True, env=env)
 
     def records(self):
         return [json.loads(line) for line in (self.dir / ".verification" / "log.jsonl").read_text().splitlines()]
@@ -162,8 +207,9 @@ class EvidenceCli(unittest.TestCase):
         self.assertEqual(self.cli("--tol", "1e-6").returncode, 0)
         (record,) = self.records()
         self.assertEqual((record["tool"], record["plugin"], record["kind"]), ("translation_verifier", "fortranbridge", "compare"))
-        self.assertEqual((record["passed"], record["exit_status"], record["tolerance"]), (True, 0, {"tol": 1e-6}))
-        expected = {name: hashlib.sha256((self.dir / name).read_bytes()).hexdigest() for name in ("ref.txt", "test.txt")}
+        self.assertEqual((record["passed"], record["exit_status"], record["tolerance"]), (True, 0, tolerance_at(1e-6)))
+        names = ("ref.txt", "test.txt", "ref_source.f", "test_source.py", "inputs.deck")
+        expected = {name: hashlib.sha256((self.dir / name).read_bytes()).hexdigest() for name in names}
         self.assertEqual({s["path"]: s["sha256"] for s in record["subjects"]}, expected)
 
     def test_a_failure_is_recorded_as_one(self):
@@ -191,10 +237,18 @@ class EvidenceCli(unittest.TestCase):
         throwaway.write_text(str(os.getpid()))
         self.assertEqual(self.cli("--tol", "1e-6", "--subject", str(throwaway)).returncode, 3)
 
-    def test_a_justification_releases_it_and_is_recorded(self):
+    def test_a_sentence_does_not_release_a_loosened_tolerance(self):
         self.cli()
-        self.assertEqual(self.cli("--tol", "1e-6", "--justify", "Fortran WRITE prints 9 digits").returncode, 0)
-        self.assertEqual(self.records()[-1]["justification"], "Fortran WRITE prints 9 digits")
+        done = self.cli("--tol", "1e-6", "--justify", "Fortran WRITE prints 9 digits")
+        self.assertEqual(done.returncode, 3)
+        self.assertIn("justify_not_an_approval", self.records()[-1]["flags"])
+
+    def test_a_matching_approval_releases_it_and_is_recorded(self):
+        self.cli()
+        reason = "approved relaxation: Fortran WRITE prints 9 digits"
+        write_approval(self.dir, 1e-6, reason)
+        self.assertEqual(self.cli("--tol", "1e-6").returncode, 0)
+        self.assertEqual(self.records()[-1]["justification"], reason)
 
     def test_regenerated_output_is_a_new_run_not_a_workaround(self):
         self.cli()
@@ -208,7 +262,8 @@ class EvidenceCli(unittest.TestCase):
         self.write("other.txt", [v + 1e-9 for v in REF])
         env = dict(os.environ, VERIFICATION_EVIDENCE_DIR=str(self.dir / ".verification"))
         done = subprocess.run([sys.executable, str(VERIFIER), "--ref", str(self.dir / "ref.txt"),
-                               "--test", str(self.dir / "other.txt"), "--tol", "1e-6"], capture_output=True, text=True, env=env)
+                               "--test", str(self.dir / "other.txt"), "--tol", "1e-6", *bind_sources(self.dir)],
+                              capture_output=True, text=True, env=env)
         self.assertEqual(done.returncode, 0, done.stdout)
         self.assertNotIn("tolerance_loosened_after_failure", self.records()[-1]["flags"])
 
