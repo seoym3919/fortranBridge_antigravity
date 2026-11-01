@@ -14,6 +14,8 @@ import contextlib
 import io
 import os
 import re
+import hashlib
+import json
 import subprocess
 import sys
 import tempfile
@@ -272,16 +274,34 @@ class PythonNumericsTests(unittest.TestCase):
         self.assertEqual(ns["getit"](blk), 8.0)
         self.assertEqual(ns["both"](5.0, blk), 10.0)     # COMMON propagates to the caller's signature
 
-    def test_goto_translates_but_fails_loudly(self):
+    def test_goto_is_translated_with_a_state_machine(self):
         src = "subroutine s(x)\nreal(8) x\nif (x .LT. 0.0d0) goto 99\nx = 1.0d0\n99 continue\nend subroutine s\n"
-        ns = load(src)                                   # translation itself must succeed
+        ns = load(src)
+        self.assertEqual(ns["s"](-1.0), -1.0)            # the jump skips the assignment
+        self.assertEqual(ns["s"](2.0), 1.0)
+
+    def test_goto_translates_but_fails_loudly(self):
+        src = "subroutine s(x)\nreal(8) x\ngoto 77\nx = 1.0d0\nend subroutine s\n"
+        ns = load(src)
         with self.assertRaises(NotImplementedError):
-            ns["s"](-1.0)
+            ns["s"](0.0)
+
+    def test_jump_to_a_missing_label_fails_loudly(self):
+        src = "subroutine s(x)\nreal(8) x\ngoto 77\nx = 1.0d0\nend subroutine s\n"
+        ns = load(src)
+        with self.assertRaises(NotImplementedError):
+            ns["s"](0.0)
 
     def test_unsupported_statements_are_never_dropped(self):
-        for stmt in ("data k /5/", "equivalence (a, b)"):
-            code = translate_fortran_to_python(f"subroutine s()\ninteger k\nreal a, b\n{stmt}\nend subroutine s\n")
-            self.assertIn("NotImplementedError", code, stmt)
+        # (DATA of whole variables, elements, sections and implied DOs is translated; a variable subscript in DATA is not;
+        # BACKSPACE and a pointer component are not)
+        for stmt in ("data a(k) /5.0/", "backspace(10)"):
+            code = translate_fortran_to_python(f"subroutine s()\nreal a(3), b\ninteger k\n{stmt}\nend subroutine s\n")
+            self.assertIn("raise NotImplementedError(", code, stmt)
+        code = translate_fortran_to_python(
+            "subroutine s()\ntype node\ndouble precision v\ntype(node), pointer :: next\nend type node\n"
+            "type(node) :: head\nhead%v = 1.0d0\nend subroutine s\n")
+        self.assertIn("raise NotImplementedError(", code)
 
     def test_generated_code_always_parses(self):
         for src in (TRIDIAG, TRIDIAG_F77, (ROOT / "examples" / "legacy_orbit.f").read_text()):
@@ -356,10 +376,12 @@ class CppStructureTests(unittest.TestCase):
         cpp = translate_fortran_to_cpp("integer function f(n)\ninteger n\nf = n/2 + n**2 + 2**n\nend function f\n")
         self.assertIn("n / 2", cpp)
         self.assertIn("(n * n)", cpp)
-        self.assertIn("static_cast<int>(std::pow(2, n))", cpp)
+        # INTEGER ** INTEGER uses an exact integer helper, not std::pow (inexact above 2**53, wrong for negative exponents)
+        self.assertIn("static_cast<int>(fortran_ipow(2, n))", cpp)
+        self.assertNotIn("std::pow", cpp)
 
     def test_unsupported_becomes_throw(self):
-        cpp = translate_fortran_to_cpp("subroutine s()\ninteger k\ndata k /5/\nend subroutine s\n")
+        cpp = translate_fortran_to_cpp("subroutine s()\ninterface swap\nmodule procedure swap_i\nend interface\nend subroutine s\n")
         self.assertIn('throw std::logic_error("fortranBridge:', cpp)
 
     def test_reserved_words_are_renamed(self):
@@ -389,7 +411,9 @@ class CliTests(unittest.TestCase):
 
     def test_untranslated_constructs_are_reported_on_stderr(self):
         with tempfile.TemporaryDirectory() as d:
-            res = self.run_cli(str(ROOT / "examples" / "legacy_orbit.f"), "--target", "python", "--out", str(Path(d) / "o.py"))
+            src = Path(d) / "eq.f90"
+            src.write_text("subroutine s()\ninterface swap\nmodule procedure swap_i\nend interface\nend subroutine s\n")
+            res = self.run_cli(str(src), "--target", "python", "--out", str(Path(d) / "o.py"))
             self.assertEqual(res.returncode, 0)
             self.assertIn("not translated", res.stderr)
 
@@ -399,11 +423,48 @@ class CliTests(unittest.TestCase):
             proj.mkdir()
             (proj / "tri.f90").write_text(TRIDIAG)
             out = Path(d) / "out"
-            res = self.run_cli(str(proj), "--target", "python", "--out-dir", str(out), "--report", str(Path(d) / "r.md"))
+            plan = Path(d) / "plan.json"
+            source = proj / "tri.f90"
+            plan = Path(d) / ".verification" / "plan.json"
+            plan.parent.mkdir()
+            plan.write_text(json.dumps({"schema": "fortranbridge-conversion-plan/1", "sources": {
+                str(source): hashlib.sha256(source.read_bytes()).hexdigest()}}))
+            (Path(d) / "PLAN.md").write_text("the plan\n")
+            res = self.run_cli(str(proj), "--target", "python", "--out-dir", str(out), "--plan", str(plan))
+            self.assertEqual(res.returncode, 4)
+            self.assertIn("not been approved", res.stderr)
+            approval = plan.parent / "plan_approval.json"
+            approval.write_text(json.dumps({"sha256": hashlib.sha256(b"the plan\n").hexdigest()}))
+            (Path(d) / "PLAN.md").write_text("edited\n")
+            res = self.run_cli(str(proj), "--target", "python", "--out-dir", str(out), "--plan", str(plan))
+            self.assertEqual(res.returncode, 4)
+            self.assertIn("changed since it was approved", res.stderr)
+            (Path(d) / "PLAN.md").write_text("the plan\n")
+            res = self.run_cli(str(proj), "--target", "python", "--out-dir", str(out), "--report", str(Path(d) / "r.md"), "--plan", str(plan))
             self.assertEqual(res.returncode, 0, res.stderr)
             self.assertTrue((out / "tri.py").exists())
             self.assertTrue((out / "__init__.py").exists())
             self.assertTrue((Path(d) / "r.md").exists())
+
+    def test_directory_mode_needs_a_plan_that_matches_the_sources(self):
+        with tempfile.TemporaryDirectory() as d:
+            proj = Path(d) / "proj"
+            proj.mkdir()
+            source = proj / "tri.f90"
+            source.write_text(TRIDIAG)
+            out = Path(d) / "out"
+            res = self.run_cli(str(proj), "--target", "python", "--out-dir", str(out))
+            self.assertEqual(res.returncode, 4)
+            self.assertFalse(out.exists())
+            plan = Path(d) / "plan.json"
+            plan.write_text(json.dumps({"schema": "fortranbridge-conversion-plan/1", "sources": {str(source): "0" * 64}}))
+            res = self.run_cli(str(proj), "--target", "python", "--out-dir", str(out), "--plan", str(plan))
+            self.assertEqual(res.returncode, 4)
+            self.assertIn("changed since", res.stderr)
+            plan.write_text(json.dumps({"schema": "fortranbridge-conversion-plan/1", "sources": {}}))
+            res = self.run_cli(str(proj), "--target", "python", "--out-dir", str(out), "--plan", str(plan))
+            self.assertEqual(res.returncode, 4)
+            self.assertIn("not in the plan", res.stderr)
 
     def test_documented_flags_exist(self):
         """Every --flag shown next to fortran_bridge_cli.py in rules/skills/agents/README is a real option."""

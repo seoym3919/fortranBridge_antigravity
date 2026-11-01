@@ -19,6 +19,8 @@ import os
 import re
 import sys
 import argparse
+import hashlib
+import json
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 
@@ -271,6 +273,35 @@ def modernize_fortran_codebase(
     }
 
 
+def plan_problem(root: Path, plan_path: Optional[str]) -> Optional[str]:
+    """A codebase is converted from a plan that lists every function, and that still matches the sources. Returns why not."""
+    if not plan_path:
+        return "a codebase directory is not converted without a conversion plan (--plan)"
+    try:
+        plan = json.loads(Path(plan_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return f"cannot read the plan {plan_path}: {exc}"
+    if plan.get("schema") != "fortranbridge-conversion-plan/1":
+        return f"{plan_path} is not a conversion plan"
+    known = {Path(name).resolve(): digest for name, digest in plan.get("sources", {}).items()}
+    for path in sorted(root.rglob("*")):
+        if path.suffix.lower() in (".f", ".for", ".f77", ".f90", ".f95", ".f03", ".f08"):
+            digest = known.get(path.resolve())
+            if digest is None:
+                return f"{path} is not in the plan"
+            if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+                return f"{path} changed since the plan was made"
+    project = Path(plan_path).resolve().parent.parent
+    try:
+        approved = json.loads((project / ".verification" / "plan_approval.json").read_text(encoding="utf-8"))["sha256"]
+        current = hashlib.sha256((project / "PLAN.md").read_bytes()).hexdigest()
+    except (OSError, ValueError, KeyError):
+        return "PLAN.md has not been approved by a human: conversion does not begin until it is"
+    if approved != current:
+        return "PLAN.md changed since it was approved: conversion does not begin until a human approves it again"
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="fortranBridge CLI - Translate legacy Fortran to modern C++ and Python (Codebase-Wide & Directory-First)."
@@ -280,6 +311,7 @@ def main():
     parser.add_argument("--out", help="Output file path (for single file translation)")
     parser.add_argument("--out-dir", help="Output directory path (for codebase directory translation)")
     parser.add_argument("--report", help="Save translation audit report markdown")
+    parser.add_argument("--plan", help="Conversion plan from conversion_plan.py; a codebase directory is not converted without one")
     parser.add_argument("--self-test", action="store_true", help="Run self-test suite")
 
     args = parser.parse_args()
@@ -295,6 +327,12 @@ def main():
 
     # DIRECTORY / CODEBASE MODE (PRIMARY MODE)
     if target_path.is_dir():
+        problem = plan_problem(target_path, args.plan)
+        if problem:
+            print(f"Error: {problem}", file=sys.stderr)
+            print(f"Start the conversion from a plan: python3 {Path(__file__).with_name('conversion_plan.py')} "
+                  f"{args.target} --target python|cpp, then pass --plan.", file=sys.stderr)
+            sys.exit(4)
         summary = modernize_fortran_codebase(
             target_path,
             target_lang=args.target_lang,

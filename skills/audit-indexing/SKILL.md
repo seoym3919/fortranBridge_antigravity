@@ -11,7 +11,7 @@ Scans translated C++ and Python code against the original Fortran source to dete
 1. **Off-by-One Errors**: Unconverted 1-based subscripts (`a[1]` instead of `a[0]`).
 2. **Loop Bounds Inconsistencies**: Loops running up to `<= n` instead of `< n`.
 3. **Non-Standard Fortran Bounds**: Arrays declared with negative or custom lower bounds (`DIMENSION A(-5:5)`).
-4. **Strided Memory Access**: Multidimensional loops accessing memory across cache strides rather than contiguously.
+4. **Loop Order**: Multidimensional loops whose nesting differs from the Fortran original.
 
 ## Usage
 

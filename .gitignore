@@ -6,3 +6,4 @@ __pycache__/
 *.out
 *.toc
 .pytest_cache/
+.verification/

@@ -1,12 +1,12 @@
 # fortranBridge: Fortran to Modern C++ & Python Translation Engine
 
-[![Antigravity Plugin](https://img.shields.io/badge/Antigravity-Plugin%20v0.4.0-blue.svg)](https://github.com/seoym3919/fortranBridge_antigravity)
+[![Antigravity Plugin](https://img.shields.io/badge/Antigravity-Plugin%20v1.1.0-blue.svg)](https://github.com/seoym3919/fortranBridge_antigravity)
 [![Agent Plugins 1.0.0](https://img.shields.io/badge/Agent%20Plugins-1.0.0%20Compliant-brightgreen.svg)](https://agent-plugins.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**fortranBridge** is an Antigravity plugin engineered to **translate legacy and modern Fortran codebases, directories, and routines (FORTRAN 66/77/90/95/2003) into idiomatic, high-performance C++ (C++17/20) and vectorized scientific Python (NumPy, SciPy, Numba).**
+**fortranBridge** is an Antigravity plugin engineered to **translate legacy and modern Fortran codebases, directories, and routines (FORTRAN 66/77/90/95/2003) into idiomatic, high-performance C++ (C++17/20) and scientific Python (NumPy), with identical equations and algorithm.**
 
-It operates on entire codebase directories by default, automating the most error-prone aspects of scientific code migration: **topological dependency linking (`MODULE`, `USE`, `CALL`), 1-based to 0-based array subscript offsets, memory layout transposition, COMMON block encapsulation, spaghetti GOTO deconstruction, CMakeLists.txt/Python package generation, and closed-loop floating-point equivalence verification ($L_2 < 10^{-12}$).**
+It operates on entire codebase directories by default, automating the most error-prone aspects of scientific code migration: **topological dependency linking (`MODULE`, `USE`, `CALL`), 1-based to 0-based array subscript offsets, COMMON block encapsulation, spaghetti GOTO deconstruction, CMakeLists.txt/Python package generation, and closed-loop equivalence verification. `scripts/port_completeness.py` requires every equation to be translated, every procedure to have a bitwise-identical unit test, and one bitwise-identical regression of the whole original mathematics. If those values differ, investigate the translation.**
 
 ---
 
@@ -30,8 +30,8 @@ agy plugin install /home/seo3919/AI_skills/fortranBridge_antigravity
 Verify installation status:
 ```bash
 agy plugin list
-# - fortranbridge (enabled, 0.4.0)
-#   Components: 10 skills, 2 agents, 1 rule
+# - fortranbridge (enabled, 1.1.0)
+#   Components: 10 skills, 2 agents, 2 rules, 2 hooks
 ```
 
 ---
@@ -234,23 +234,45 @@ def propagate(r0: np.ndarray, v0: np.ndarray, dt: float, gm: float, n: int, orbi
 
 | Supported | Not translated (emitted as `raise NotImplementedError` / `throw std::logic_error`) |
 | :--- | :--- |
-| SUBROUTINE / FUNCTION / PROGRAM (several per file), fixed and free form | `GO TO`, computed `GO TO`, arithmetic `IF` (Python only; C++ keeps `goto`) |
-| Typed declarations, implicit typing, `DIMENSION`, non-unit lower bounds, `PARAMETER` | `DATA`, `EQUIVALENCE`, formatted / file I/O (`FORMAT`, `READ`, `WRITE` to units) |
-| `DO`, `DO WHILE`, `EXIT`, `CYCLE`, `IF / ELSE IF / ELSE`, one-line `IF` | Array sections and whole-array expressions (C++), derived types, `MODULE` / `USE`, pointers |
-| `CALL` (scalar results returned / passed by reference), `COMMON`, intrinsics, `PRINT *` | |
-
-Semantics worth knowing: integer division truncates as in Fortran; `INTENT(OUT)` scalars are returned in Python (`mean, var = stats(n, x)`); the Fortran loop variable keeps its Fortran value and subscripts carry the `-1` shift; C++ re-evaluates DO bounds each iteration. C++ output is checked for structure only (no compiler is invoked by the tests).
+| SUBROUTINE / FUNCTION / PROGRAM (several per file), MODULE with CONTAINS and USE (ONLY, renaming), internal procedures (CONTAINS in a unit), fixed and free form | `BACKSPACE`, `ENDFILE`, unformatted and direct-access files, `NAMELIST`, `INQUIRE` other than `EXIST=` |
+| Typed declarations with kinds (`REAL(dp)`, `INTEGER*8`, `COMPLEX`, `CHARACTER(n)`), implicit typing, `DIMENSION`, `ALLOCATABLE` and assumed-shape arrays, non-unit lower bounds, `PARAMETER`, derived types | Derived-type components that are `POINTER` or `ALLOCATABLE` (linked structures), type-bound procedures, inheritance, generic `INTERFACE` (overloading), `USE` of a module defined elsewhere |
+| `DO`, `DO WHILE`, `EXIT`, `CYCLE`, `IF / ELSE IF / ELSE`, `SELECT CASE`, `GO TO`, computed `GO TO`, arithmetic `IF`, `END=` / `ERR=` / `IOSTAT=` | `EQUIVALENCE` of arrays in C++ (Python supports it); a pointer to an array section in C++; derived-type arrays above rank 1; `READ` of complex values |
+| `CALL` (scalar results returned / passed by reference), `COMMON`, `DATA` / `SAVE`, `EQUIVALENCE`, intrinsics, whole-array expressions and sections, array constructors, `POINTER` / `TARGET` / `ALLOCATE` / `DEALLOCATE`, `PRINT` / `WRITE` / `READ` / `OPEN` / `CLOSE` / `REWIND` with `FORMAT` | |
 
 The CLI validates every output: Python must parse (exit code 3 otherwise) and the number of untranslated constructs is reported on stderr.
 
-## 8. Tests
+## 8. How a Conversion Runs
+
+Every codebase conversion follows these steps, and the tools refuse to skip one:
+
+1. **Plan.** `scripts/conversion_plan.py SOURCES --target python|cpp` lists every function and module in `FORTRAN_FUNCTION_LIST.md`, runs the Fortran under `gprof` to see how they link, and writes `PLAN.md`: the order of conversion (callees first), the rules, and the golden data table.
+2. **Approval.** Nothing converts or tests until a human approves that exact `PLAN.md` by typing `APPROVE PLAN <code>` as their own message. The `PreInvocation` hook (`scripts/plan_approval.py`) reads the message. Any edit to `PLAN.md` voids the approval, and a plan of 25 units or more is flagged as large scope.
+3. **Golden data.** `scripts/regression_test.py record` stores the Fortran's results as bytes before conversion, so a later change cannot redefine the expected answer. Every function must be covered, with nominal and corner cases and more than 10 distinct whole-program cases.
+4. **Convert function by function**, in plan order. After each function comes a unit test (`scripts/unit_compare.py` runs both sides itself and compares raw bytes), then at least one regression test. A function is refused until everything earlier has passed both.
+5. **Final regression.** `regression_test.py run --final` runs every case.
+
+Byte identical is the rule throughout. Machine precision (eps relative, 2 ULP) is accepted only for what the plan shows reaching a library such as `sin`, `exp` or `MATMUL`, where Fortran and the target need not share the last bit. `sqrt` is not on that list: IEEE 754 fixes it, so a difference there is a bug.
+
+## 9. Identical Equations and Algorithm
+
+A translation is checked three ways, and a claim needs all of them. Each one catches what the others cannot.
+
+| Check | Compares | Catches |
+| --- | --- | --- |
+| `scripts/identity_checker.py` | gfortran's own parse tree with the translation (Python through `ast`, C++ through clang's AST), statement by statement; `GO TO` programs by walking both control-flow graphs in lockstep | Reassociated or reordered arithmetic, changed loops, bounds, branches, kinds, literals, declarations, returned results |
+| `scripts/trace_checker.py` | The bits of every assignment, in order, between instrumented copies of both programs; every statement must execute (`gcov` and the probes) | A helper that matches its table entry but computes something else; a statement no input reached |
+| `scripts/translation_verifier.py` | The printed results | Values that are printed but never assigned |
+
+Verdicts are enforced by the `Stop` hook (`scripts/claim_guard.py`), which repeats the static check itself instead of trusting the log. The final message of a turn that states a result ends with one `VERDICT:` line (`equivalent`, `identical algorithm`, `complete` or `unverified`).
+
+## 10. Tests
 
 ```bash
-python3 -B -m unittest discover -s tests -v   # 114 tests: parser semantics, verifier, evidence log, NumPy/C++ equivalence, CLI flags & Python 3.10 portability
+python3 -B -m unittest discover -s tests -v   # 348 tests: parser, lexer, numerics vs NumPy, C++ structure, CLI, documented flags, the conversion strategy, identity and trace checks, the PreInvocation & Stop hooks
 ```
 
 Manual: [`docs/fortranBridge_manual.pdf`](./docs/fortranBridge_manual.pdf) (LaTeX source alongside).
 
-## 9. License
+## 11. License
 
 MIT License. Designed and maintained by `seoym3919` as part of the Antigravity scientific ecosystem alongside `scienceStack`, `theoryExtractor`, and `cppBridge`.

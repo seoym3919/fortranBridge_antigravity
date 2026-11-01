@@ -4,10 +4,12 @@ description: Compare the output of translated C++/Python against the original Fo
 argument-hint: "--ref FORTRAN_OUT --test TRANSLATED_OUT [--tol 1e-12] [--report FILE]"
 ---
 
-# /fortranbridge:verify-translation
+# /verify-translation
 
 Runs closed-loop numerical verification: the translated program must reproduce the original Fortran program's output.
-The script decides; Claude must not judge equivalence by reading numbers itself. A numeric pass is not a complete port. Every equation translated, every procedure unit tested, and one regression of the whole mathematics is `${CLAUDE_PLUGIN_ROOT}/scripts/port_completeness.py --target python|cpp`. Only exit 0 from that command completes the port (rules/directives.md item 4). That regression and those unit tests pass only when the values are bitwise identical. If they differ, investigate the translation instead of widening a tolerance.
+The script decides; the agent must not judge equivalence by reading numbers itself. A numeric pass is not a complete port. Every equation translated, every procedure unit tested, and one regression of the whole mathematics is `python3 ~/.gemini/config/plugins/fortranbridge/scripts/port_completeness.py --target python|cpp`. Only exit 0 from that command completes the port (`rules/directives.md` item 4). That regression and those unit tests pass only when the values are bitwise identical. If they differ, investigate the translation instead of widening a tolerance.
+
+The `Stop` hook `scripts/claim_guard.py` blocks a final message that claims equivalence without a fresh passing compare record in `.verification/log.jsonl`. Claims of a complete port also need the fresh passing completeness record that the port-completeness checker appends to that log. End a result message with `VERDICT: equivalent`, `VERDICT: complete`, `VERDICT: identical algorithm` or `VERDICT: unverified`.
 
 ## Usage
 
@@ -17,7 +19,7 @@ The script decides; Claude must not judge equivalence by reading numbers itself.
 2. Compare:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/translation_verifier.py" --ref fortran.out --test translated.out --tol 1e-12 --report verification.md
+python3 ~/.gemini/config/plugins/fortranbridge/scripts/translation_verifier.py --ref fortran.out --test translated.out --tol 1e-12 --report verification.md
 ```
 
 `--self-test` checks the verifier itself on built-in functions (including negative controls that must be
@@ -45,11 +47,11 @@ manifest you trust.
 
 Every comparison is appended as one line to `./.verification/log.jsonl` (`--evidence-dir` or `$VERIFICATION_EVIDENCE_DIR` to move it,
 `--no-evidence` to skip it): the verdict, the tolerance, and the SHA-256 of both output files. Lines are hash-chained; check them with
-`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/verification_evidence.py" verify`.
+`python3 ~/.gemini/config/plugins/fortranbridge/scripts/verification_evidence.py verify`.
 
 - **Exit 3, verdict withheld:** the tolerance is looser than in the previous *failed* run (including a dropped numeric tolerance key) and the primary files did not change. Fix the code. A `--justify` sentence is recorded and does not release the verdict. Release needs `tolerance-approvals.json` (schema `verification-tolerance-approvals/1`) naming the check key, the SHA-256 of the previous failed log line, the old tolerance, the new tolerance, and a reason of at least 10 characters. If a primary file did change, the run is allowed and only flagged. Repeating the command does not release it, and files named with `--subject` cannot release it. A new `--evidence-dir` starts an empty history; a clean re-run in CI is the gate.
 - If the log cannot be written, a pass becomes exit 2 (a pass without evidence is not a pass); a failure stays 1.
-- Before telling the user the result is equivalent, `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/verification_evidence.py" fresh --subject <file>`
+- Before telling the user the result is equivalent, `python3 ~/.gemini/config/plugins/fortranbridge/scripts/verification_evidence.py fresh --subject <file>`
   must exit 0: the latest record for that file is a pass and the file is unchanged since. A stale or missing record is not evidence.
 - The log is a local file: anything running as the user can rewrite all of it, and a truncated tail is not detected. A clean re-run in CI
   is the only unforgeable gate.

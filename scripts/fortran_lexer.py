@@ -40,36 +40,23 @@ def is_fixed_format(text: str) -> bool:
     r"""Heuristic to detect fixed-format vs free-format Fortran."""
     lines = text.splitlines()
     fixed_score = 0
-    free_score = 0
     total_non_empty = 0
 
-    for l in lines[:200]:
-        stripped = l.strip()
-        if not stripped:
+    for l in lines[:100]:
+        if not l.strip():
             continue
         total_non_empty += 1
-
-        # Free-format signals
-        if stripped.endswith('&'):
-            free_score += 4
-        if '!' in l and not (len(l) > 0 and l[0] in ('C', 'c', '*')):
-            free_score += 1
-        if re.search(r'\b(MODULE|CONTAINS|INTERFACE|INTENT\s*\(|USE\s+[A-Za-z]|TYPE\s*::)\b', stripped, re.IGNORECASE):
-            free_score += 5
-
         # Fixed format comments in col 1
         if len(l) > 0 and l[0] in ('C', 'c', '*') and (len(l) == 1 or not l[1].isalnum()):
+            fixed_score += 2
+        # Fixed format continuation in col 6
+        elif len(l) >= 6 and l[0:5].strip() == "" and l[5] not in (' ', '0', '\t'):
             fixed_score += 3
-        # Statement label in cols 1-5 followed by space
+        # Statement label in cols 1-5
         elif len(l) >= 6 and l[0:5].strip().isdigit() and l[5] in (' ', '0', '\t'):
-            fixed_score += 1
-        # Fixed format continuation in col 6 (col 0-4 blank, col 5 non-blank, cols 6+ not empty)
-        elif len(l) >= 7 and l[0:5].strip() == "" and l[5] not in (' ', '0', '\t') and not l[5].isalnum():
-            fixed_score += 4
+            fixed_score += 2
 
-    if free_score > fixed_score:
-        return False
-    return fixed_score >= 4 or (total_non_empty > 0 and fixed_score / total_non_empty > 0.25)
+    return fixed_score >= 3 or (total_non_empty > 0 and fixed_score / total_non_empty > 0.15)
 
 
 def normalize_fixed_format(lines: List[str]) -> List[Tuple[int, Optional[str], str]]:
@@ -176,7 +163,7 @@ def normalize_free_format(lines: List[str]) -> List[Tuple[int, Optional[str], st
     return statements
 
 
-_TYPE_SPEC = r'(DOUBLE\s+PRECISION|REAL|INTEGER|LOGICAL|COMPLEX|CHARACTER)'
+_TYPE_SPEC = r'(DOUBLE\s+PRECISION|REAL|INTEGER|LOGICAL|COMPLEX|CHARACTER|TYPE\s*\(\s*[A-Za-z]\w*\s*\))'
 _KIND_SPEC = r'(\*\s*\d+|\(\s*(?:(?:KIND|LEN)\s*=\s*)?[\w*]+\s*\))?'
 
 
@@ -198,12 +185,22 @@ def _split_top(text: str, sep: str = ',') -> List[str]:
 
 
 def _canonical_type(base: str, kind: Optional[str]) -> str:
+    if base.upper().startswith('TYPE'):
+        return re.sub(r'\s+', '', base.upper())              # TYPE(POINT)
     base = re.sub(r'\s+', ' ', base.upper())
     if base == 'DOUBLE PRECISION' or not kind:
         return base
+    if base == 'CHARACTER':
+        # CHARACTER*8 / CHARACTER(8) / CHARACTER(LEN=8) / CHARACTER(LEN=n): keep the length; (*) is an assumed length
+        inner = re.sub(r'^\*|^\(\s*(?:LEN\s*=\s*)?|\s*\)$', '', kind.strip(), flags=re.IGNORECASE)
+        return f"CHARACTER*{inner.upper()}" if re.fullmatch(r'\d+|[A-Za-z_]\w*', inner) else base
     k = re.sub(r'[^0-9]', '', kind)
-    if base == 'CHARACTER' or not k:
-        return base
+    if base == 'COMPLEX' and k and kind.lstrip().startswith('('):
+        return f"COMPLEX*{2 * int(k)}"            # COMPLEX(8) is two 8-byte parts = COMPLEX*16; COMPLEX*8 is two 4-byte parts
+    if not k:
+        # a named kind such as REAL(dp): keep the name so the semantic layer can resolve it (REAL*DP)
+        name = re.sub(r'^\(\s*(?:KIND\s*=\s*)?|\s*\)$', '', kind.strip(), flags=re.IGNORECASE)
+        return f"{base}*{name.upper()}" if re.fullmatch(r'[A-Za-z_]\w*', name) else base
     return f"{base}*{k}"
 
 
@@ -225,12 +222,13 @@ def _match_type_decl(t: str) -> Optional[Dict[str, Any]]:
     decls = decls.strip()
     if not decls or decls.startswith('=') or (not attrs and rest.startswith('(') and '::' not in rest):
         return None
-    out: Dict[str, Any] = {"type": _canonical_type(base, kind), "declarations": decls}
+    out: Dict[str, Any] = {"type": _canonical_type(base, kind), "declarations": decls, "attrs": []}
     for a in attrs:
         am = re.match(r'^(\w+)\s*(?:\((.*)\))?$', a.strip(), re.IGNORECASE)
         if not am:
             continue
         key = am.group(1).lower()
+        out["attrs"].append(key)
         if key == 'intent' and am.group(2):
             out["intent"] = re.sub(r'\s+', '', am.group(2)).lower()
         elif key == 'dimension' and am.group(2):
@@ -259,19 +257,6 @@ def _match_parenthesized_if(t: str) -> Optional[Tuple[str, str]]:
 def classify_statement(stmt_text: str) -> Tuple[str, Dict[str, Any]]:
     r"""Classify clean Fortran statement into statement type and extracted metadata."""
     t = stmt_text.strip()
-    if '!' in t:
-        parts = []
-        in_quote = None
-        for ch in t:
-            if ch in ('"', "'"):
-                if in_quote == ch:
-                    in_quote = None
-                elif in_quote is None:
-                    in_quote = ch
-            elif ch == '!' and in_quote is None:
-                break
-            parts.append(ch)
-        t = "".join(parts).strip()
     t_upper = t.upper()
 
     # Subroutine / Function
@@ -293,6 +278,38 @@ def classify_statement(stmt_text: str) -> Tuple[str, Dict[str, Any]]:
     if re.match(r'^END\s*(?:(?:SUBROUTINE|FUNCTION|MODULE|PROGRAM)(?:\s+[A-Za-z0-9_]+)?)?$', t_upper):
         return "END", {}
 
+    # TYPE name ... END TYPE (a derived-type definition; TYPE(name) :: x is a declaration)
+    m_typedef = re.match(r'^TYPE(?!\s*\()\s*(?:,\s*(.*?))?\s*(?:::)?\s*([A-Za-z]\w*)$', t, re.IGNORECASE)
+    if m_typedef:
+        return "TYPE_DEF", {"name": m_typedef.group(2).lower(), "attrs": (m_typedef.group(1) or "").lower()}
+    if re.match(r'^END\s*TYPE\b', t_upper):
+        return "END_TYPE", {}
+
+    # SELECT CASE (expr) / CASE (v, lo:hi) / CASE DEFAULT / END SELECT
+    m_select = re.match(r'^SELECT\s*CASE\s*\((.*)\)$', t, re.IGNORECASE)
+    if m_select:
+        return "SELECT_CASE", {"expr": m_select.group(1)}
+    if re.match(r'^CASE\s*DEFAULT$', t_upper):
+        return "CASE", {"default": True, "selectors": []}
+    m_case = re.match(r'^CASE\s*\((.*)\)$', t, re.IGNORECASE)
+    if m_case:
+        return "CASE", {"default": False, "selectors": _split_top(m_case.group(1))}
+    if re.match(r'^END\s*SELECT$', t_upper):
+        return "END_SELECT", {}
+
+    # ALLOCATE / DEALLOCATE / NULLIFY, attribute statements, pointer assignment
+    m_alloc = re.match(r'^(ALLOCATE|DEALLOCATE|NULLIFY)\s*\((.*)\)$', t, re.IGNORECASE)
+    if m_alloc:
+        items = [x.strip() for x in _split_top(m_alloc.group(2)) if x.strip()]
+        options = [x for x in items if re.match(r'^(STAT|ERRMSG|SOURCE|MOLD)\s*=', x, re.IGNORECASE)]
+        return m_alloc.group(1).upper(), {"objects": [x for x in items if x not in options], "options": options}
+    m_attr = re.match(r'^(ALLOCATABLE|POINTER|TARGET)\b\s*(?:::)?\s*(.*)$', t, re.IGNORECASE)
+    if m_attr and m_attr.group(2) and '=' not in t:
+        return "ATTRIBUTE", {"attr": m_attr.group(1).lower(), "names": [x.strip() for x in _split_top(m_attr.group(2)) if x.strip()]}
+    m_ptr = re.match(r'^([A-Za-z]\w*(?:\s*\(.*?\))?(?:%\w+(?:\s*\(.*?\))?)*)\s*=>\s*(.+)$', t)
+    if m_ptr:
+        return "POINTER_ASSIGN", {"lhs": m_ptr.group(1).strip(), "rhs": m_ptr.group(2).strip()}
+
     # Common Block: COMMON /NAME/ VAR1, VAR2(10)
     m_comm = re.match(r'^COMMON\s*(?:/([A-Za-z0-9_]*)/)?\s*(.*)$', t, re.IGNORECASE)
     if m_comm:
@@ -300,11 +317,20 @@ def classify_statement(stmt_text: str) -> Tuple[str, Dict[str, Any]]:
         vars_list = [v.strip() for v in m_comm.group(2).split(',') if v.strip()]
         return "COMMON", {"block": block_name, "variables": vars_list}
 
-    # Equivalence: EQUIVALENCE (A, B)
-    m_equiv = re.match(r'^EQUIVALENCE\s*\(([^)]+)\)', t, re.IGNORECASE)
+    # Equivalence: EQUIVALENCE (A, B(3)), (C, D)
+    m_equiv = re.match(r'^EQUIVALENCE\s*(\(.*)$', t, re.IGNORECASE)
     if m_equiv:
-        pairs = [p.strip() for p in m_equiv.group(1).split(',')]
-        return "EQUIVALENCE", {"variables": pairs}
+        sets, depth, start, body = [], 0, None, m_equiv.group(1)
+        for k, ch in enumerate(body):
+            if ch == '(':
+                if depth == 0:
+                    start = k + 1
+                depth += 1
+            elif ch == ')':
+                depth -= 1
+                if depth == 0 and start is not None:
+                    sets.append([p.strip() for p in _split_top(body[start:k]) if p.strip()])
+        return "EQUIVALENCE", {"sets": sets, "variables": [v for group in sets for v in group]}
 
     # Parameter: PARAMETER (PI = 3.1415D0, ...)
     m_param = re.match(r'^PARAMETER\s*\((.*)\)$', t, re.IGNORECASE)
@@ -330,6 +356,41 @@ def classify_statement(stmt_text: str) -> Tuple[str, Dict[str, Any]]:
     if decl is not None:
         return "TYPE_DECL", decl
 
+    # MODULE m / END MODULE / USE m [, ONLY: a, b] / CONTAINS
+    m_module = re.match(r'^MODULE\s+([A-Za-z]\w*)$', t, re.IGNORECASE)
+    if m_module and m_module.group(1).upper() != "PROCEDURE":
+        return "MODULE", {"name": m_module.group(1).lower()}
+    if re.match(r'^END\s*MODULE(?:\s+\w+)?$', t_upper):
+        return "END_MODULE", {}
+    m_use = re.match(r'^USE\s+(?:::\s*)?([A-Za-z]\w*)\s*(?:,\s*(.*))?$', t, re.IGNORECASE)
+    if m_use:
+        rest = (m_use.group(2) or "").strip()
+        only: Optional[List[str]] = None
+        if re.match(r'^ONLY\s*:', rest, re.IGNORECASE):
+            only = []
+            items = rest.split(':', 1)[1]
+        else:
+            items = rest
+        renames: Dict[str, str] = {}
+        names: List[str] = []
+        for item in _split_top(items):
+            if '=>' in item:
+                local, remote = [x.strip().lower() for x in item.split('=>', 1)]
+                renames[local] = remote
+                names.append(remote)
+            elif item.strip():
+                names.append(item.strip().lower())
+        if only is not None:
+            only = names
+        return "USE", {"module": m_use.group(1).lower(), "only": only, "renames": renames}
+    m_iface = re.match(r'^INTERFACE\b\s*(.*)$', t, re.IGNORECASE)
+    if m_iface:
+        return "INTERFACE", {"name": m_iface.group(1).strip()}
+    if re.match(r'^END\s*INTERFACE\b', t_upper):
+        return "END_INTERFACE", {}
+    if t_upper == "CONTAINS":
+        return "CONTAINS", {}
+
     # STOP / non-executable declarations that carry no translatable semantics
     if re.match(r'^STOP\b', t_upper):
         return "STOP", {"text": t}
@@ -345,16 +406,18 @@ def classify_statement(stmt_text: str) -> Tuple[str, Dict[str, Any]]:
     if t_upper in ("EXIT", "CYCLE"):
         return t_upper, {}
 
-    # DO Loop: DO 10 I = 1, N, 2 or DO I = 1, N
-    m_do = re.match(r'^DO\s+(?:(\d+)\s+)?([A-Za-z0-9_]+)\s*=\s*([^,]+),\s*([^,]+)(?:,\s*([^,]+))?$', t, re.IGNORECASE)
+    # DO Loop: DO 10 I = 1, N, 2 or DO I = 1, N (bounds may contain commas: DO J = 1, SIZE(M, 2))
+    m_do = re.match(r'^DO\s+(?:(\d+)\s+)?([A-Za-z][A-Za-z0-9_]*)\s*=\s*(.+)$', t, re.IGNORECASE)
     if m_do:
-        return "DO", {
-            "loop_label": m_do.group(1),
-            "var": m_do.group(2),
-            "start": m_do.group(3).strip(),
-            "end": m_do.group(4).strip(),
-            "step": m_do.group(5).strip() if m_do.group(5) else "1"
-        }
+        bounds = [b.strip() for b in _split_top(m_do.group(3))]
+        if 2 <= len(bounds) <= 3:
+            return "DO", {
+                "loop_label": m_do.group(1),
+                "var": m_do.group(2),
+                "start": bounds[0],
+                "end": bounds[1],
+                "step": bounds[2] if len(bounds) == 3 else "1"
+            }
 
     if re.match(r'^END\s*DO$', t_upper) or t_upper == "CONTINUE":
         return "END_DO" if "DO" in t_upper else "CONTINUE", {}
@@ -400,15 +463,16 @@ def classify_statement(stmt_text: str) -> Tuple[str, Dict[str, Any]]:
     # Subroutine Call: CALL FOO(A, B)
     m_call = re.match(r'^CALL\s+([A-Za-z0-9_]+)(?:\s*\((.*)\))?$', t, re.IGNORECASE)
     if m_call:
-        args = [a.strip() for a in m_call.group(2).split(',')] if m_call.group(2) else []
+        args = _split_top(m_call.group(2)) if m_call.group(2) else []     # a(1,2) is one argument
         return "CALL", {"subroutine": m_call.group(1), "args": args}
 
     # Return
     if t_upper.startswith("RETURN"):
         return "RETURN", {}
 
-    # I/O: PRINT, WRITE, READ, FORMAT
-    if re.match(r'^(PRINT|WRITE|READ|FORMAT)\b', t_upper):
+    # I/O: PRINT, WRITE, READ, FORMAT, and the file statements (their control lists contain '=', so they come before assignment)
+    if re.match(r'^(PRINT|WRITE|READ|FORMAT)\b', t_upper) or re.match(r'^(OPEN|CLOSE|INQUIRE|FLUSH)\s*\(', t_upper) or \
+            re.match(r'^(REWIND|BACKSPACE|ENDFILE)\b(?!\s*=)', t_upper):
         return "IO", {"statement": t}
 
     # Assignment: VAR = EXPR or ARRAY(I) = EXPR

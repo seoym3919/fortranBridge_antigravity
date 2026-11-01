@@ -1036,6 +1036,28 @@ def run_self_test() -> bool:
     return ok
 
 
+def _record_completeness(report: PortReport, log: Path, args: argparse.Namespace) -> str:
+    """Append a `completeness` record (kind used by claim_guard.py) binding every file this check read. A log is created
+    only next to an existing evidence directory; returns a note for the report, or "" when nothing needed saying."""
+    try:
+        base = log.resolve().parent.parent
+        paths = (_expand(args.original, _SOURCE_SUFFIXES) + _expand(args.translated, _TRANSLATED_SUFFIXES)
+                 + (_expand(args.unit_tests, _TEST_SUFFIXES) if args.unit_tests else [])
+                 + (_expand(args.regression_test, _SOURCE_SUFFIXES | _TRANSLATED_SUFFIXES | _TEST_SUFFIXES)
+                    if args.regression_test else []))
+        subjects = [ve.subject(str(path), base) for path in paths]
+        originals = [ve.subject(str(path), base)["path"] for path in _expand(args.original, _SOURCE_SUFFIXES)]
+        translated = [ve.subject(str(path), base)["path"] for path in _expand(args.translated, _TRANSLATED_SUFFIXES)]
+        ve.record_run(log, tool="port_completeness", plugin="fortranbridge", kind="completeness", name="port_completeness",
+                      key="port_completeness", passed=report.ok, tolerance={}, subjects=subjects,
+                      detail={"failures": len(report.failures), "functions": len(report.functions),
+                              "equations": len(report.equations),
+                              "originals": originals, "translated": translated})
+    except (ve.EvidenceError, OSError, InventoryError) as exc:
+        return f"\n(evidence not recorded: {exc})\n"
+    return ""
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description="Fail unless every original equation is translated, every function is unit tested, "
@@ -1050,6 +1072,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--evidence-dir", help="directory containing log.jsonl, used when --evidence-log is omitted")
     parser.add_argument("--rename", action="append", default=[], help="original=translated function name (repeatable)")
     parser.add_argument("--report", help="also write the report to this file")
+    parser.add_argument("--no-evidence", action="store_true",
+                        help="do not append a completeness record to the evidence log")
     parser.add_argument("--self-test", action="store_true", help="check the checker itself; this does not check a port")
     args = parser.parse_args(argv)
     if args.self_test:
@@ -1080,6 +1104,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         regression_tests=args.regression_test, evidence_log=log, renames=renames,
                         target=args.target)
     text = format_report(report)
+    if not args.no_evidence and report.exit_code in (0, 1):
+        note = _record_completeness(report, Path(log), args)
+        if note:
+            text += note
     sys.stdout.write(text)
     if args.report:
         Path(args.report).write_text(text, encoding="utf-8")

@@ -73,7 +73,7 @@ FORTRAN_INTRINSICS: Dict[str, Dict[str, Any]] = {
     "MOD": {"cpp": "std::fmod({0}, {1})", "python_scalar": "math.fmod({0}, {1})", "python_vector": "np.fmod({0}, {1})", "header_cpp": "<cmath>", "category": "math"},
     "AMOD": {"cpp": "std::fmod({0}, {1})", "python_scalar": "math.fmod({0}, {1})", "python_vector": "np.fmod({0}, {1})", "header_cpp": "<cmath>", "category": "math"},
     "DMOD": {"cpp": "std::fmod({0}, {1})", "python_scalar": "math.fmod({0}, {1})", "python_vector": "np.fmod({0}, {1})", "header_cpp": "<cmath>", "category": "math"},
-    "MODULO": {"cpp": "std::fmod({0}, {1})", "python_scalar": "{0} % {1}", "python_vector": "{0} % {1}", "header_cpp": "<cmath>", "category": "math"},
+    "MODULO": {"cpp": "std::fmod({0}, {1})", "python_scalar": "(({0}) % ({1}))", "python_vector": "(({0}) % ({1}))", "header_cpp": "<cmath>", "category": "math"},
 
     # Sign Transfer & Positive Difference
     # Fortran SIGN(A, B): returns |A| * sgn(B). If B >= 0 -> |A|, else -|A|.
@@ -82,9 +82,9 @@ FORTRAN_INTRINSICS: Dict[str, Dict[str, Any]] = {
     "DSIGN": {"cpp": "std::copysign({0}, {1})", "python_scalar": "math.copysign({0}, {1})", "python_vector": "np.copysign({0}, {1})", "header_cpp": "<cmath>", "category": "math"},
 
     # Fortran DIM(A, B): returns max(0, A - B)
-    "DIM": {"cpp": "std::max(0.0, {0} - {1})", "python_scalar": "max(0.0, {0} - {1})", "python_vector": "np.maximum(0.0, {0} - {1})", "header_cpp": "<algorithm>", "category": "math"},
-    "IDIM": {"cpp": "std::max(0, {0} - {1})", "python_scalar": "max(0, {0} - {1})", "python_vector": "np.maximum(0, {0} - {1})", "header_cpp": "<algorithm>", "category": "math"},
-    "DDIM": {"cpp": "std::max(0.0, {0} - {1})", "python_scalar": "max(0.0, {0} - {1})", "python_vector": "np.maximum(0.0, {0} - {1})", "header_cpp": "<algorithm>", "category": "math"},
+    "DIM": {"cpp": "std::max(0.0, ({0}) - ({1}))", "python_scalar": "max(0.0, {0} - {1})", "python_vector": "np.maximum(0.0, {0} - {1})", "header_cpp": "<algorithm>", "category": "math"},
+    "IDIM": {"cpp": "std::max(0, ({0}) - ({1}))", "python_scalar": "max(0, {0} - {1})", "python_vector": "np.maximum(0, {0} - {1})", "header_cpp": "<algorithm>", "category": "math"},
+    "DDIM": {"cpp": "std::max(0.0, ({0}) - ({1}))", "python_scalar": "max(0.0, {0} - {1})", "python_vector": "np.maximum(0.0, {0} - {1})", "header_cpp": "<algorithm>", "category": "math"},
 
     # Min / Max
     "MIN": {"cpp": "std::min({{{args}}})", "python_scalar": "min({args})", "python_vector": "np.minimum({args})", "header_cpp": "<algorithm>", "category": "math"},
@@ -111,6 +111,38 @@ FORTRAN_INTRINSICS: Dict[str, Dict[str, Any]] = {
     "IFIX": {"cpp": "static_cast<int>({0})", "python_scalar": "int({0})", "python_vector": "{0}.astype(int)", "header_cpp": "", "category": "conversion"},
     "IDINT": {"cpp": "static_cast<int>({0})", "python_scalar": "int({0})", "python_vector": "{0}.astype(int)", "header_cpp": "", "category": "conversion"},
 
+    # Complex numbers
+    "CONJG": {"cpp": "std::conj({0})", "python_scalar": "({0}).conjugate()", "python_vector": "np.conj({0})", "header_cpp": "<complex>", "category": "complex"},
+    "DCONJG": {"cpp": "std::conj({0})", "python_scalar": "({0}).conjugate()", "python_vector": "np.conj({0})", "header_cpp": "<complex>", "category": "complex"},
+    "AIMAG": {"cpp": "({0}).imag()", "python_scalar": "({0}).imag", "python_vector": "np.imag({0})", "header_cpp": "<complex>", "category": "complex"},
+    "DIMAG": {"cpp": "({0}).imag()", "python_scalar": "({0}).imag", "python_vector": "np.imag({0})", "header_cpp": "<complex>", "category": "complex"},
+    "DREAL": {"cpp": "({0}).real()", "python_scalar": "float(({0}).real)", "python_vector": "np.real({0})", "header_cpp": "<complex>", "category": "complex"},
+    "CMPLX": {"cpp": "{0}", "python_scalar": "{0}", "python_vector": "{0}", "header_cpp": "<complex>", "category": "complex"},
+    "DCMPLX": {"cpp": "{0}", "python_scalar": "{0}", "python_vector": "{0}", "header_cpp": "<complex>", "category": "complex"},
+
+    # Character
+    "TRIM": {"cpp": "fortran_trim({0})", "python_scalar": "({0}).rstrip(' ')", "python_vector": "({0}).rstrip(' ')", "header_cpp": "<string>", "category": "string"},
+    "LEN_TRIM": {"cpp": "static_cast<int>(fortran_trim({0}).size())", "python_scalar": "len(({0}).rstrip(' '))", "python_vector": "len(({0}).rstrip(' '))", "header_cpp": "<string>", "category": "string"},
+    "LEN": {"cpp": "static_cast<int>(std::string({0}).size())", "python_scalar": "len({0})", "python_vector": "len({0})", "header_cpp": "<string>", "category": "string"},
+
+    # Allocation status (the emitters build these: an unallocated array is None / an empty std::vector)
+    "ALLOCATED": {"cpp": "!({0}).empty()", "python_scalar": "(({0}) is not None)", "python_vector": "(({0}) is not None)", "header_cpp": "", "category": "array"},
+    "ASSOCIATED": {"cpp": "(({0}) != nullptr)", "python_scalar": "(({0}) is not None)", "python_vector": "(({0}) is not None)", "header_cpp": "", "category": "array"},
+
+    # Truncation toward zero, keeping the real type
+    "AINT": {"cpp": "std::trunc({0})", "python_scalar": "float(math.trunc({0}))", "python_vector": "np.trunc({0})", "header_cpp": "<cmath>", "category": "conversion"},
+    "DINT": {"cpp": "std::trunc({0})", "python_scalar": "float(math.trunc({0}))", "python_vector": "np.trunc({0})", "header_cpp": "<cmath>", "category": "conversion"},
+
+    # Rounding to an integer
+    "FLOOR": {"cpp": "static_cast<int>(std::floor({0}))", "python_scalar": "math.floor({0})", "python_vector": "np.floor({0}).astype(int)", "header_cpp": "<cmath>", "category": "conversion"},
+    "CEILING": {"cpp": "static_cast<int>(std::ceil({0}))", "python_scalar": "math.ceil({0})", "python_vector": "np.ceil({0}).astype(int)", "header_cpp": "<cmath>", "category": "conversion"},
+
+    # Numeric inquiry: the value depends on the kind of the argument, so the emitters build these (see PyUnitEmitter /
+    # CppUnitEmitter); the templates below are placeholders that keep the names "known".
+    "EPSILON": {"cpp": "{0}", "python_scalar": "{0}", "python_vector": "{0}", "header_cpp": "<limits>", "category": "inquiry"},
+    "HUGE": {"cpp": "{0}", "python_scalar": "{0}", "python_vector": "{0}", "header_cpp": "<limits>", "category": "inquiry"},
+    "TINY": {"cpp": "{0}", "python_scalar": "{0}", "python_vector": "{0}", "header_cpp": "<limits>", "category": "inquiry"},
+
     # Nearest Integer & Rounding
     "NINT": {"cpp": "static_cast<int>(std::round({0}))", "python_scalar": "round({0})", "python_vector": "np.round({0}).astype(int)", "header_cpp": "<cmath>", "category": "conversion"},
     "IDNINT": {"cpp": "static_cast<int>(std::round({0}))", "python_scalar": "round({0})", "python_vector": "np.round({0}).astype(int)", "header_cpp": "<cmath>", "category": "conversion"},
@@ -128,6 +160,18 @@ FORTRAN_INTRINSICS: Dict[str, Dict[str, Any]] = {
     "SIZE": {"cpp": "static_cast<int>({0}.size())", "python_scalar": "len({0})", "python_vector": "{0}.size", "header_cpp": "", "category": "array"},
     "SHAPE": {"cpp": "/* shape */", "python_scalar": "/* shape */", "python_vector": "{0}.shape", "header_cpp": "", "category": "array"},
 }
+
+
+# Fortran 77/90/95 standard intrinsic names. A call to one of these that has no mapping above must fail loudly in the
+# translation; it is never an external user function. (Newer math functions such as ERF, GAMMA or HYPOT are left out:
+# legacy code often supplies its own.)
+STANDARD_INTRINSIC_NAMES = frozenset("""
+ACHAR ADJUSTL ADJUSTR ALL ALLOCATED ANY ASSOCIATED BIT_SIZE BTEST CEILING CHAR COMPLEX COUNT CSHIFT
+CPU_TIME DATE_AND_TIME DIGITS DPROD EOSHIFT EXPONENT FRACTION IACHAR IAND IBCLR IBITS IBSET ICHAR IEOR INDEX IOR ISHFT
+ISHFTC KIND LBOUND LGE LGT LLE LLT LOGICAL MAXEXPONENT MAXLOC MERGE MINEXPONENT MINLOC MVBITS NEAREST NOT NULL
+PACK PRECISION PRESENT RADIX RANDOM_NUMBER RANDOM_SEED RANGE REPEAT RESHAPE RRSPACING SCALE SCAN SET_EXPONENT SHAPE
+SPACING SPREAD SYSTEM_CLOCK TRANSFER UBOUND UNPACK VERIFY CEXP CLOG CCOS CSIN
+""".split())
 
 
 def translate_intrinsic(name: str, args: list[str], target: str = "cpp", vectorized: bool = False) -> Tuple[str, Optional[str]]:

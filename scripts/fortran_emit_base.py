@@ -17,9 +17,17 @@ import re
 from typing import Dict, List, Optional, Set, Tuple
 
 from fortran_lexer import FortranStatement, classify_statement
+from fortran_intrinsics import FORTRAN_INTRINSICS
 from fortran_semantics import (
-    Expr, FortranParseError, Unit, Symbol, infer_type, io_items, parse_expression,
+    ArrayCtor, Binary, ComplexLit, Expr, FortranParseError, ImpliedDo, Logical, Name, Ref, Slice, Unary, Unit, Symbol,
+    classify_format, format_io, infer_type, io_items, io_statement, parse_expression,
 )
+
+# intrinsics that reduce an array to a scalar (their array arguments stay whole in an element-wise expression)
+ARRAY_REDUCERS = {"SUM", "PRODUCT", "MAXVAL", "MINVAL", "DOT_PRODUCT", "SIZE", "MAXLOC", "MINLOC", "LBOUND", "UBOUND",
+                  "ALL", "ANY", "COUNT", "SHAPE", "NORM2", "ALLOCATED", "ASSOCIATED"}
+# intrinsics whose result is an array that cannot be rewritten element by element
+ARRAY_RESULT = {"MATMUL": lambda r: r[0] + r[1] - 2, "TRANSPOSE": lambda r: 2}
 
 
 class UnitEmitter:
@@ -34,6 +42,12 @@ class UnitEmitter:
         self.blocks: List[Tuple[str, Optional[str]]] = []     # ('do'|'while'|'if', label)
         self.block_marks: List[int] = []                      # len(self.lines) when a block body opened
         self.goto_targets: Set[str] = self._collect_goto_targets()
+        self.selects: List[dict] = []                          # open SELECT CASE constructs
+        self.formats: Dict[str, str] = {}                      # statement label -> text of a FORMAT statement
+        for st in unit.stmts:
+            if st.label and st.stmt_type == "IO" and re.match(r"^FORMAT\b", st.details["statement"], re.IGNORECASE):
+                self.formats[st.label] = st.details["statement"][6:].strip()
+        self.goto_targets |= self._io_jump_targets()
 
     # ------------------------------------------------------------------ plumbing
     def line(self, text: str = "") -> None:
@@ -59,6 +73,16 @@ class UnitEmitter:
                 m = re.match(r"^GO\s*TO\s*(\d+)$", d["statement"].strip(), re.IGNORECASE)
                 if m:
                     targets.add(m.group(1))
+        return targets
+
+    def _io_jump_targets(self) -> Set[str]:
+        """Labels named by END= and ERR= specifiers: those statements jump."""
+        targets: Set[str] = set()
+        for st in self.unit.stmts:
+            if st.stmt_type == "IO":
+                io = io_statement(st.details["statement"])
+                if io:
+                    targets.update(v for k, v in io["controls"].items() if k in ("end", "err") and v.isdigit())
         return targets
 
     # ------------------------------------------------------------------ driver
@@ -106,8 +130,6 @@ class UnitEmitter:
 
     def switch_block(self) -> None:
         r"""Leave the current IF branch before an ELSE IF / ELSE."""
-        if not self.block_marks:
-            return
         mark = self.block_marks.pop()
         self.level -= 1
         self.finish_branch(empty=(len(self.lines) == mark))
@@ -169,6 +191,86 @@ class UnitEmitter:
             self.do_unsupported(f"could not parse expression ({exc})", d["statement"])
         self.close_block()
 
+    # SELECT CASE is an if / else-if chain on the selector expression (EXIT and CYCLE still act on the enclosing DO).
+    def on_SELECT_CASE(self, d, raw):
+        self.selects.append({"expr": self.parse(d["expr"]), "cases": 0})
+
+    @staticmethod
+    def _range_colon(item: str) -> int:
+        """Index of the top-level ':' of a CASE range such as 6:9, :-1 or 10: ; -1 for a single value."""
+        depth, quote = 0, None
+        for k, ch in enumerate(item):
+            if quote:
+                quote = None if ch == quote else quote
+            elif ch in "'\"":
+                quote = ch
+            elif ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+            elif ch == ":" and depth == 0:
+                return k
+        return -1
+
+    def _case_condition(self, sel: Expr, selectors: List[str]) -> Optional[Expr]:
+        cond: Optional[Expr] = None
+        for item in selectors:
+            colon = self._range_colon(item)
+            if colon < 0:
+                test = Binary("==", sel, self.parse(item))
+            else:
+                lo, hi = item[:colon].strip(), item[colon + 1:].strip()
+                bounds = ([Binary(">=", sel, self.parse(lo))] if lo else []) + \
+                         ([Binary("<=", sel, self.parse(hi))] if hi else [])
+                if not bounds:
+                    raise FortranParseError("empty CASE range")
+                test = bounds[0] if len(bounds) == 1 else Binary("and", bounds[0], bounds[1])
+            cond = test if cond is None else Binary("or", cond, test)
+        return cond
+
+    def on_CASE(self, d, raw):
+        if not self.selects:
+            raise FortranParseError("CASE outside SELECT CASE")
+        sel = self.selects[-1]
+        default = d["default"]
+        try:
+            cond = None if default else self._case_condition(sel["expr"], d["selectors"])
+        except FortranParseError:
+            cond = None                       # an unparsable selector becomes an untranslated condition (fails loudly)
+        if sel["cases"] == 0:
+            self.open_if(Logical(True) if default else cond, raw)
+            self.push_block("if")
+        else:
+            self.switch_block()
+            if default:
+                self.open_else()
+            else:
+                self.open_elif(cond, raw)
+            self.level += 1
+        sel["cases"] += 1
+
+    def on_END_SELECT(self, d, raw):
+        sel = self.selects.pop() if self.selects else {"cases": 0}
+        if sel["cases"]:
+            while self.blocks and self.blocks[-1][0] != "if":
+                self.close_block()
+            self.close_block()
+
+    def on_ALLOCATE(self, d, raw):
+        self.do_allocate([self.parse(o) for o in d["objects"]], d["options"], raw)
+
+    def on_DEALLOCATE(self, d, raw):
+        self.do_deallocate([self.parse(o) for o in d["objects"]], d["options"], raw)
+
+    def on_NULLIFY(self, d, raw):
+        self.do_deallocate([self.parse(o) for o in d["objects"]], [], raw, nullify=True)
+
+    def on_ATTRIBUTE(self, d, raw):
+        pass                                   # ALLOCATABLE / POINTER / TARGET are applied to the symbol table
+
+    def on_POINTER_ASSIGN(self, d, raw):
+        self.do_pointer_assign(self.parse(d["lhs"]), self.parse(d["rhs"]), raw)
+
     def on_ASSIGNMENT(self, d, raw):
         self.do_assign(self.parse(d["lhs"]), self.parse(d["rhs"]), raw)
 
@@ -204,24 +306,59 @@ class UnitEmitter:
         kind, items = io_items(text)
         if kind == "print":
             self.do_print([self.parse(i) for i in items], raw)
-        else:
-            self.do_unsupported("formatted/file I/O is not translated (see the decompile-format skill)", text)
+            return
+        formatted = format_io(text)
+        if formatted is None:
+            io = io_statement(text)
+            if io is None or io["kind"] in ("BACKSPACE", "ENDFILE"):
+                self.do_unsupported("this I/O statement is not translated (BACKSPACE, ENDFILE, direct or unformatted access)", text)
+                return
+            if io["kind"] == "FLUSH":
+                return
+            fmt = classify_format(io["fmt"]) if io["fmt"] is not None else None
+            if fmt is not None and fmt[0] == "label":
+                if fmt[1] not in self.formats:
+                    self.do_unsupported(f"FORMAT {fmt[1]} not found", text)
+                    return
+                fmt = ("string", self.formats[fmt[1]])
+            if fmt is not None and fmt[0] == "expr":
+                fmt = ("expr", self.parse(fmt[1]))
+            self.do_io(io, fmt, text)
+            return
+        (how, spec), out_items = formatted
+        if how == "label":
+            if spec not in self.formats:
+                self.do_unsupported(f"FORMAT {spec} not found", text)
+                return
+            how, spec = "string", self.formats[spec]
+        self.do_formatted((how, spec if how == "string" else self.parse(spec)), [self.parse(i) for i in out_items], raw)
 
     def on_NONEXEC(self, d, raw):
         text = d["text"]
-        if re.match(r"^DATA\b", text, re.IGNORECASE):
-            self.do_unsupported("DATA initialisation is not translated", text)
-        else:
-            self.do_comment(f"fortran: {text}")
+        # DATA and SAVE are applied to the symbol table (static storage, initial values); problems are reported per unit
+        self.do_comment(f"fortran: {text}")
 
     def on_IMPLICIT(self, d, raw):
+        pass
+
+    # MODULE / USE / CONTAINS are resolved in the semantic layer (module symbols are imported into each unit)
+    def on_MODULE(self, d, raw):
+        pass
+
+    def on_END_MODULE(self, d, raw):
+        pass
+
+    def on_USE(self, d, raw):
+        self.do_comment(f"fortran: {raw}")
+
+    def on_CONTAINS(self, d, raw):
         pass
 
     def on_COMMON(self, d, raw):
         pass
 
     def on_EQUIVALENCE(self, d, raw):
-        self.do_unsupported("EQUIVALENCE storage association is not translated", raw)
+        self.do_comment(f"fortran: {raw}")             # storage association is set up where the unit begins
 
     def on_END(self, d, raw):
         pass
@@ -244,6 +381,31 @@ class UnitEmitter:
         except FortranParseError:
             return None
 
+    def array_valued(self, e: Expr) -> bool:
+        """Does `e` denote an array (a whole array, a section, a constructor, MATMUL, an element-wise expression of those)?"""
+        if isinstance(e, ArrayCtor):
+            return True
+        if isinstance(e, Name):
+            sym = self.unit.symbols.get(e.name)
+            return bool(sym is not None and sym.rank)
+        if isinstance(e, Ref):
+            sym = self.unit.symbols.get(e.name)
+            if sym is not None and sym.rank:
+                return any(isinstance(a, Slice) for a in e.args)
+            key = e.name.upper()
+            if e.name in self.units and self.units[e.name].kind == "FUNCTION":
+                return False
+            if key in ARRAY_REDUCERS:
+                return False
+            if key in ARRAY_RESULT:
+                return True
+            return key in FORTRAN_INTRINSICS and any(self.array_valued(a) for a in e.args)
+        if isinstance(e, Unary):
+            return self.array_valued(e.operand)
+        if isinstance(e, Binary):
+            return self.array_valued(e.left) or self.array_valued(e.right)
+        return False
+
     # ------------------------------------------------------------------ hooks (language specific)
     def begin_unit(self): raise NotImplementedError
     def end_unit(self): raise NotImplementedError
@@ -255,6 +417,11 @@ class UnitEmitter:
     def finish_block(self, kind, empty): raise NotImplementedError
     def finish_branch(self, empty): raise NotImplementedError
     def do_assign(self, lhs, rhs, raw): raise NotImplementedError
+    def do_formatted(self, fmt, items, raw): raise NotImplementedError
+    def do_io(self, io, fmt, raw): raise NotImplementedError
+    def do_allocate(self, objects, options, raw): raise NotImplementedError
+    def do_deallocate(self, objects, options, raw, nullify=False): raise NotImplementedError
+    def do_pointer_assign(self, lhs, rhs, raw): raise NotImplementedError
     def do_call(self, callee, args, raw): raise NotImplementedError
     def do_return(self): raise NotImplementedError
     def do_stop(self, text, raw): raise NotImplementedError

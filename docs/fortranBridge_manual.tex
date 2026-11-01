@@ -354,6 +354,66 @@ with float64 defaults $rtol = 10^{-12}$ and $atol = 0$, the IEEE-754 ULP distanc
 A complete port is \texttt{port\_completeness.py --target python|cpp}, claimed only when it exits 0. Every original equation must be translated. Every procedure other than a \texttt{PROGRAM} must have a bitwise unit test, and the latest verifier record must have passed with $atol = 0$ and $\mathrm{max\_ulp} = 0$ on checker version 2 or newer. A \texttt{PROGRAM} is emitted as \texttt{main}. If the values differ, the translation is investigated. The tolerance is not raised.
 
 % =============================================================================
+\section{Conversion Strategy: Plan, Approval, Golden Data, Regression}
+% =============================================================================
+
+A whole codebase is converted in a fixed order, and the tools refuse to skip a step.
+
+\begin{enumerate}
+    \item \textbf{Plan.} \texttt{conversion\_plan.py SOURCES --target python|cpp} lists every function and module in \texttt{FORTRAN\_FUNCTION\_LIST.md}, runs the Fortran under \texttt{gprof} to see how they link, and writes \texttt{PLAN.md}: the order of conversion (callees first), the rules, and the golden data table.
+    \item \textbf{Approval.} Nothing is converted or tested until a human approves that exact \texttt{PLAN.md} by typing \texttt{APPROVE PLAN <code>} as their own message. A hook reads the message. Any edit to \texttt{PLAN.md} voids the approval.
+    \item \textbf{Golden data.} \texttt{regression\_test.py record} stores the Fortran results as bytes before conversion, so a later change cannot redefine the expected answer. Every function must be covered, with nominal and corner cases and more than 10 distinct whole-program cases.
+    \item \textbf{Convert one function or module at a time}, in plan order. After each function comes a unit test (\texttt{unit\_compare.py} runs both sides itself and compares raw bytes) and at least one regression test (\texttt{regression\_test.py run --after}). A function is refused until everything earlier in the plan has passed both.
+    \item \textbf{Final regression.} \texttt{regression\_test.py run --final} runs every case.
+\end{enumerate}
+
+Byte identity is the rule throughout. Agreement within machine precision, with relative error at most the machine epsilon of the data ($2.22\times10^{-16}$ for float64, $1.19\times10^{-7}$ for float32) and at most 2 ULP, is accepted only for what the plan shows reaching a library such as \texttt{sin}, \texttt{exp} or \texttt{MATMUL}, where Fortran and the target need not share the last bit. \texttt{sqrt} is not on that list: IEEE~754 fixes it, so a difference there is a bug.
+
+The approval and the evidence are plain files, so these steps make approval a human step in normal use. They are not a defence against something writing those files directly.
+
+% =============================================================================
+\section{Identical Equations and Algorithm}
+% =============================================================================
+
+Matching output shows that some numbers agree on some inputs. A translation is therefore checked three ways, and a claim needs all of them; each catches what the others cannot.
+
+\begin{center}
+\begin{tabular}{@{}p{0.2\linewidth}p{0.36\linewidth}p{0.34\linewidth}@{}}
+\toprule
+Check & Compares & Catches \\
+\midrule
+\texttt{identity\_checker} & gfortran's own parse tree with the translation (Python through \texttt{ast}, C++ through clang), statement by statement; \texttt{GO TO} programs by walking both control-flow graphs in lockstep & reassociated or reordered arithmetic, changed loops, bounds, branches, kinds, literals, declarations, returned results \\
+\texttt{trace\_checker} & the bits of every assignment, in order, between instrumented copies of both programs; every statement must execute & a helper that matches its table entry but computes something else; a statement no input reached \\
+\texttt{translation\_verifier} & the printed results & values that are printed but never assigned \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The checkers do not import the translator, so a translator bug cannot hide itself. The one shared piece of knowledge is a rewrite table in \texttt{identity\_checker}: what each construct of the translation means in Fortran. A construct that is not in the table is a failure, never a pass. The instrumented Fortran must print exactly what the original prints, or the run is rejected. Exit status is $0$ for identical, $1$ for different and $2$ when nothing was established; exit $2$ is never a pass.
+
+\paragraph{Verdicts.} The final message of a turn that states a result ends with one \texttt{VERDICT:} line. A Stop hook (\texttt{claim\_guard.py}) checks that line, and any sentence claiming equivalence or a complete port, against the evidence log \texttt{.verification/log.jsonl}, and blocks the stop when the evidence is missing, stale or looser than the rules allow. It repeats the static check itself instead of trusting the log.
+
+\begin{center}
+\begin{tabular}{@{}p{0.27\linewidth}p{0.63\linewidth}@{}}
+\toprule
+Verdict & Needs \\
+\midrule
+\texttt{equivalent} & a plan, a passing identity check and a bitwise compare ($atol=0$, $\mathrm{max\_ulp}=0$); for a Python port also a bitwise trace \\
+\texttt{identical algorithm} & a plan that shows a Fortran-specific library, identity and (Python) trace with \texttt{--machine-precision}, and a compare within machine precision. The equations and the algorithm are the same and a library differs in the last bits; it is never reported as bitwise \\
+\texttt{complete} & as \texttt{equivalent}, plus \texttt{port\_completeness.py} on the same files and a fresh passing unit test for every function of the plan \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{Limits.}
+\begin{itemize}
+    \item Reading C++ needs clang (\texttt{clang++}, or \texttt{FORTRANBRIDGE\_CXX}); g++ cannot produce this AST. The trace reads Python only, so a C++ port has the static check, the unit tests and the regression, without a statement-level trace.
+    \item ``Identical'' means agreement with a \texttt{-O0 -fwrapv} build of the source. Another optimisation level can print different numbers: 4 of 43 fixtures differ between \texttt{-O0} and \texttt{-O2}.
+    \item This is structural identity of the program given and bitwise agreement on the inputs run, not a proof about the translator.
+    \item \texttt{MATMUL} calls libgfortran's own routine. Without the library it falls back to a fixed-order sum, measured at up to 18 ULP from gfortran, which is more than machine precision, so that program earns neither \texttt{equivalent} nor \texttt{identical algorithm}.
+\end{itemize}
+
+% =============================================================================
 \section{Summary and Command Reference}
 % =============================================================================
 
@@ -374,6 +434,18 @@ python3 scripts/translation_verifier.py --ref fortran.out --test translated.out 
 python3 scripts/port_completeness.py --original legacy.f --translated port.py \
     --target python --unit-tests tests --evidence-log .verification/log.jsonl
 python3 scripts/f2py_harness.py --self-test
+
+# The conversion strategy, in order
+python3 scripts/conversion_plan.py legacy.f --target python    # FORTRAN_FUNCTION_LIST.md and PLAN.md; then a human types APPROVE PLAN <code>
+python3 scripts/regression_test.py record                      # golden data from the Fortran, before converting
+python3 scripts/unit_compare.py --function NAME --fortran-driver DRIVER --target-test TEST \
+    --target-command COMMAND --translated port.py              # after each function
+python3 scripts/regression_test.py run --after NAME --translated port.py
+python3 scripts/regression_test.py run --final --translated port.py
+
+# Same equations and algorithm
+python3 scripts/identity_checker.py --original legacy.f --translated port.py
+python3 scripts/trace_checker.py --original legacy.f --translated port.py [--stdin inputs.txt] [--machine-precision]
 \end{lstlisting}
 
 \end{document}

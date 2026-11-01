@@ -1,0 +1,18 @@
+{
+  "fortranbridge-gate": {
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "python3 ./scripts/plan_approval.py",
+        "timeout": 15
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "python3 ./scripts/claim_guard.py",
+        "timeout": 60
+      }
+    ]
+  }
+}
